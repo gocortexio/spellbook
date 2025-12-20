@@ -1,0 +1,24 @@
+# GoCortex Spellbook Docker Compose Configuration
+# Provides a convenient way to run the spellbook container
+
+services:
+  spellbook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount current directory as content workspace
+      - .:/content:rw
+    # Default to showing help
+    command: ["--help"]
+
+  # Development variant with shell access
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/content:rw
+    entrypoint: ["/bin/bash"]
+    stdin_open: true
+    tty: true

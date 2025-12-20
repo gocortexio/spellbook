@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gocortex-spellbook"
+dynamic = ["version"]
+description = "A Python toolset for building, validating, and packaging Cortex Platform content packs."
+requires-python = ">=3.11"
+dependencies = [
+    "demisto-sdk>=1.38.15",
+    "gitpython>=3.1.45",
+    "pyyaml>=6.0.3",
+]
+
+[tool.hatch.version]
+path = "spellbook/__init__.py"
