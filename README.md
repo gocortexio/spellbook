@@ -35,13 +35,13 @@ Choose your preferred method and follow the corresponding guide:
 
 ```bash
 # Pull from GitHub Container Registry (preferred)
-docker pull ghcr.io/gocortex/spellbook:latest
+docker pull ghcr.io/gocortexio/spellbook:latest
 
 # Or build locally from source
-docker build -t ghcr.io/gocortex/spellbook .
+docker build -t ghcr.io/gocortexio/spellbook .
 
 # Create a content instance
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook init my-content --author "My Organisation"
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "My Organisation"
 
 # Initialise Git (required for validation)
 cd my-content
@@ -50,7 +50,7 @@ git add .
 git commit -s -m "Initial commit"
 
 # Build all packs
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook build --all
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build --all
 ```
 
 ## Commands
@@ -140,10 +140,6 @@ gocortex-spellbook bump-version SamplePack --major
 ```
 
 Git tags (format: `PackName-v1.0.0`) can be used to trigger CI/CD builds but are not required for local development.
-
-## Known Issues
-
-See [DOCS_PRIVATE/KNOWN_BUGS.md](DOCS_PRIVATE/KNOWN_BUGS.md) for documented issues and workarounds.
 
 ## Licence
 

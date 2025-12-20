@@ -6,7 +6,7 @@ FROM python:3.11-slim-bookworm
 LABEL maintainer="GoCortex Spellbook Contributors"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
 LABEL version="1.16.1"
-LABEL org.opencontainers.image.source="https://github.com/gocortex/spellbook"
+LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
 LABEL org.opencontainers.image.licenses="MIT"
 

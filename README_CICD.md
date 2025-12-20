@@ -42,7 +42,7 @@ Make sure the image is accessible to your repository. For private registries, yo
 Create a content instance with CI enabled (this is the default):
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook init my-content --author "Your Organisation"
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation"
 ```
 
 Initialise Git and push to GitHub:
@@ -113,7 +113,7 @@ For subsequent releases, increment the version:
 
 ```bash
 # Update the pack version first
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook set-version SamplePack 1.1.0
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook set-version SamplePack 1.1.0
 
 # Commit the version change
 git add Packs/SamplePack/pack_metadata.json
@@ -133,19 +133,19 @@ Spellbook provides the bump-version command to automatically increment pack vers
 
 ```bash
 # Bump revision (1.0.0 -> 1.0.1) - default behaviour
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook bump-version SamplePack
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack
 
 # Bump revision explicitly (1.0.0 -> 1.0.1)
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook bump-version SamplePack --revision
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --revision
 
 # Bump minor version (1.0.0 -> 1.1.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook bump-version SamplePack --minor
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --minor
 
 # Bump major version (1.0.0 -> 2.0.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook bump-version SamplePack --major
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --major
 
 # Bump version and create a Git tag for CI/CD triggering
-docker run --rm -v $(pwd):/content ghcr.io/gocortex/spellbook bump-version SamplePack --tag
+docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --tag
 ```
 
 The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers the build workflow automatically.
