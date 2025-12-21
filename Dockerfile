@@ -5,7 +5,7 @@ FROM python:3.11-slim-bookworm
 
 LABEL maintainer="GoCortex Spellbook Contributors"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
-LABEL version="1.16.1"
+LABEL version="1.16.5"
 LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
 LABEL org.opencontainers.image.licenses="MIT"
@@ -22,16 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set up application directory
 WORKDIR /app
 
-# Install demisto-sdk from latest GitHub release
+# Install demisto-sdk from latest GitHub release and additional dependencies
 RUN LATEST_VERSION=$(curl -s https://api.github.com/repos/demisto/demisto-sdk/releases/latest | jq -r '.tag_name') && \
-    pip install --no-cache-dir "demisto-sdk==${LATEST_VERSION#v}" || \
-    pip install --no-cache-dir demisto-sdk
-
-# Install additional Python dependencies
-RUN pip install --no-cache-dir \
-    gitpython \
-    pyyaml \
-    click
+    pip install --no-cache-dir "demisto-sdk==${LATEST_VERSION#v}" gitpython pyyaml || \
+    pip install --no-cache-dir demisto-sdk gitpython pyyaml
 
 # Copy project files
 COPY spellbook/ ./spellbook/

@@ -57,8 +57,16 @@ A Git repository with at least one commit is required for demisto-sdk validation
 ```bash
 cd my-content
 git init
+git branch -M main
 git add .
 git commit -s -m "Initial commit"
+```
+
+If using a remote repository (optional):
+
+```bash
+git remote add origin <your-repo-url>
+git push -u origin main
 ```
 
 ---

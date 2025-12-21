@@ -12,28 +12,15 @@ This guide walks you through setting up automated builds and validation using Gi
 
 ---
 
-## Publish Spellbook Docker Image to a Registry
+## Spellbook Docker Image
 
-Before your CI/CD pipeline can use Spellbook, you need to publish the Docker image to a registry that your GitHub Actions runners can access.
-
-Build and push to GitHub Container Registry:
+The official Spellbook Docker image is published to GitHub Container Registry:
 
 ```bash
-# Clone Spellbook
-git clone <spellbook-repo-url>
-cd gocortex-spellbook
-
-# Log in to GitHub Container Registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USERNAME --password-stdin
-
-# Build and tag the image
-docker build -t ghcr.io/your-org/gocortex-spellbook:latest .
-
-# Push to registry
-docker push ghcr.io/your-org/gocortex-spellbook:latest
+docker pull ghcr.io/gocortexio/spellbook:latest
 ```
 
-Make sure the image is accessible to your repository. For private registries, you may need to configure repository secrets.
+This image is used by the CI/CD workflows and is automatically built with each release.
 
 ---
 
@@ -50,9 +37,10 @@ Initialise Git and push to GitHub:
 ```bash
 cd my-content
 git init
-git remote add origin git@github.com:your-org/my-content.git
+git branch -M main
 git add .
 git commit -s -m "Initial commit"
+git remote add origin git@github.com:your-org/my-content.git
 git push -u origin main
 ```
 
@@ -60,34 +48,14 @@ Note: The -s flag signs your commit, which is required by some organisations.
 
 ---
 
-## Configure GitHub Actions Workflows
+## GitHub Actions Workflows
 
 Your instance includes two workflow files in .github/workflows/:
 
 - build.yml - Builds packs when tags are pushed
 - validate.yml - Validates packs on pull requests and pushes to main
 
-Update both workflow files to reference your published Spellbook image.
-
-Edit .github/workflows/build.yml:
-
-```yaml
-# Replace this line:
-ghcr.io/your-org/cortex-spellbook:latest
-
-# With your actual image reference:
-ghcr.io/your-org/gocortex-spellbook:latest
-```
-
-Edit .github/workflows/validate.yml with the same change.
-
-Commit and push the workflow changes:
-
-```bash
-git add .github/workflows/
-git commit -s -m "Configure Spellbook image reference"
-git push
-```
+These workflows are pre-configured to use the official Spellbook image (`ghcr.io/gocortexio/spellbook:latest`). No additional configuration is required.
 
 ---
 
@@ -172,7 +140,7 @@ jobs:
           docker run --rm \
             -v ${{ github.workspace }}/Packs:/content/Packs \
             -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-            ghcr.io/your-org/gocortex-spellbook:latest \
+            ghcr.io/gocortexio/spellbook:latest \
             validate-all
 
       - name: Lint packs
@@ -182,7 +150,7 @@ jobs:
             docker run --rm \
               -v ${{ github.workspace }}/Packs:/content/Packs \
               -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-              ghcr.io/your-org/gocortex-spellbook:latest \
+              ghcr.io/gocortexio/spellbook:latest \
               lint "$pack_name"
           done
 ```
@@ -197,7 +165,7 @@ Add a check for naming consistency:
             docker run --rm \
               -v ${{ github.workspace }}/Packs:/content/Packs \
               -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-              ghcr.io/your-org/gocortex-spellbook:latest \
+              ghcr.io/gocortexio/spellbook:latest \
               check-naming "$pack_name"
           done
 ```

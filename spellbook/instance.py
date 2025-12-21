@@ -109,7 +109,7 @@ jobs:
             -v ${{ github.instance }}/Packs:/instance/Packs \\
             -v ${{ github.instance }}/artifacts:/instance/artifacts \\
             -v ${{ github.instance }}/spellbook.yaml:/instance/spellbook.yaml \\
-            ghcr.io/your-org/cortex-spellbook:latest \\
+            ghcr.io/gocortexio/spellbook:latest \\
             build --all --no-validate
 
       - name: Upload artefacts
@@ -169,7 +169,7 @@ jobs:
           docker run --rm \\
             -v ${{ github.instance }}/Packs:/instance/Packs \\
             -v ${{ github.instance }}/spellbook.yaml:/instance/spellbook.yaml \\
-            ghcr.io/your-org/cortex-spellbook:latest \\
+            ghcr.io/gocortexio/spellbook:latest \\
             validate-all
 
       - name: Check validation results
