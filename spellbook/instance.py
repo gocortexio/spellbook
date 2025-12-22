@@ -66,7 +66,7 @@ class InstanceManager:
 
         self._create_readme(instance_path, name, description, include_ci)
 
-        self._create_sample_pack(instance_path)
+        self._create_sample_pack(instance_path, author)
 
         return instance_path
 
@@ -106,9 +106,9 @@ jobs:
       - name: Build packs
         run: |
           docker run --rm \\
-            -v ${{ github.instance }}/Packs:/instance/Packs \\
-            -v ${{ github.instance }}/artifacts:/instance/artifacts \\
-            -v ${{ github.instance }}/spellbook.yaml:/instance/spellbook.yaml \\
+            -v ${{ github.workspace }}/Packs:/content/Packs \\
+            -v ${{ github.workspace }}/artifacts:/content/artifacts \\
+            -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \\
             ghcr.io/gocortexio/spellbook:latest \\
             build --all --no-validate
 
@@ -167,8 +167,8 @@ jobs:
       - name: Validate packs
         run: |
           docker run --rm \\
-            -v ${{ github.instance }}/Packs:/instance/Packs \\
-            -v ${{ github.instance }}/spellbook.yaml:/instance/spellbook.yaml \\
+            -v ${{ github.workspace }}/Packs:/content/Packs \\
+            -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \\
             ghcr.io/gocortexio/spellbook:latest \\
             validate-all
 
@@ -193,8 +193,11 @@ jobs:
                 "support": "community",
                 "author": author or "Your Organisation",
                 "url": "",
+                "email": "",
                 "categories": [],
                 "tags": [],
+                "useCases": [],
+                "keywords": [],
                 "marketplaces": ["xsoar", "marketplacev2"]
             },
             "exclude_packs": [],
@@ -355,7 +358,7 @@ docker run --rm -v $(pwd):/content \\
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_content)
 
-    def _create_sample_pack(self, instance_path: Path) -> None:
+    def _create_sample_pack(self, instance_path: Path, author: str = "") -> None:
         """Create a sample pack in the instance."""
         from .pack_template import PackTemplate
 
@@ -366,7 +369,13 @@ docker run --rm -v $(pwd):/content \\
         template.packs_dir = packs_dir
         template.defaults = {
             "support": "community",
-            "author": "Your Organisation",
+            "author": author or "Your Organisation",
+            "url": "",
+            "email": "",
+            "categories": [],
+            "tags": [],
+            "useCases": [],
+            "keywords": [],
             "marketplaces": ["xsoar", "marketplacev2"]
         }
 

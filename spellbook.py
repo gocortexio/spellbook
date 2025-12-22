@@ -201,6 +201,7 @@ def build(pack_name, build_all, validate, lint, config):
         failed = len(results) - success
         click.echo(f"\nBuild complete: {success} succeeded, {failed} failed")
     elif pack_name:
+        builder.validate_pack_exists(pack_name)
         result = builder.build_pack(
             pack_name,
             validate=validate,
@@ -227,6 +228,7 @@ def build(pack_name, build_all, validate, lint, config):
 def validate(pack_name, config):
     """Validate a content pack using demisto-sdk."""
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
     if builder.validate_pack(pack_name):
         click.echo("[PASS] Validation passed")
     else:
@@ -274,6 +276,7 @@ def validate_all(config):
 def lint(pack_name, config):
     """Lint a content pack using demisto-sdk pre-commit."""
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
     if builder.lint_pack(pack_name):
         click.echo("[PASS] Linting passed")
     else:
@@ -330,6 +333,7 @@ def create(pack_name, description, author, template, config):
 def version(pack_name, config):
     """Show version information for a pack."""
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
     vm = VersionManager()
 
     metadata = builder.read_pack_metadata(pack_name)
@@ -353,6 +357,7 @@ def version(pack_name, config):
 def set_version(pack_name, new_version, config):
     """Set the version for a pack."""
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
     builder.update_pack_version(pack_name, new_version)
     click.echo(f"[OK] Set {pack_name} version to {new_version}")
 
@@ -400,6 +405,7 @@ def bump_version(pack_name, major, minor, revision, tag, config):
     Use --tag to also create a Git tag for the new version.
     """
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
 
     if major:
         increment_type = "major"
@@ -425,24 +431,23 @@ def bump_version(pack_name, major, minor, revision, tag, config):
     release_notes_path = release_notes_dir / version_filename
     
     if not release_notes_path.exists():
-        release_content = f"""
-#### Parsing Rules
+        release_content = f"""#### Parsing Rules
 
 ##### {pack_name} Parsing Rule
 
-(Describe parsing rule changes here)
+- (Describe parsing rule changes here)
 
 #### Modeling Rules
 
 ##### {pack_name} Modeling Rule
 
-(Describe modelling rule changes here)
+- (Describe modelling rule changes here)
 
 #### Correlation Rules
 
 ##### {pack_name} - (Rule Name)
 
-(Describe correlation rule changes here)
+- (Describe correlation rule changes here)
 """
         with open(release_notes_path, "w", encoding="utf-8") as f:
             f.write(release_content)
@@ -484,6 +489,7 @@ def rename_content(pack_name, config):
     IDs in ModelingRules, ParsingRules, and CorrelationRules.
     """
     builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
 
     mismatched = builder.check_content_naming(pack_name)
     if not mismatched:
@@ -554,7 +560,7 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
       DEMISTO_BASE_URL - Your instance URL
       DEMISTO_API_KEY  - API key with Instance Administrator role
 
-    For Cortex Platform 8.x, also set:
+    For XSIAM, also set:
       XSIAM_AUTH_ID    - Authentication ID from your instance
     """
     base_url = os.environ.get("DEMISTO_BASE_URL")
@@ -573,7 +579,7 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
 
     if xsiam and not xsiam_auth_id:
         click.echo("[ERROR] XSIAM_AUTH_ID environment variable not set")
-        click.echo("For Cortex Platform 8.x, set the auth ID from your instance")
+        click.echo("For XSIAM, set the auth ID from your instance")
         sys.exit(1)
 
     input_file = Path(input_path)
@@ -598,6 +604,36 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
             click.echo(f"  gocortex-spellbook build {pack_name}")
             click.echo("")
 
+    content_root = input_file.parent.parent.resolve() if input_file.is_dir() else Path.cwd()
+    git_dir = content_root / ".git"
+    git_initialized = False
+    
+    if not git_dir.exists():
+        click.echo("Setting up temporary git repository for upload...")
+        try:
+            subprocess.run(
+                ["git", "init"],
+                cwd=str(content_root),
+                capture_output=True,
+                check=True
+            )
+            git_initialized = True
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=str(content_root),
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(
+                ["git", "-c", "user.name=Spellbook", "-c", "user.email=spellbook@localhost",
+                 "commit", "-m", "Temporary commit for upload", "--allow-empty"],
+                cwd=str(content_root),
+                capture_output=True,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            click.echo(f"[WARN] Could not initialise git repository: {e}")
+
     cmd = ["demisto-sdk", "upload", "-i", str(input_file)]
 
     if zip:
@@ -616,7 +652,11 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
     click.echo(f"Target: {base_url}")
 
     try:
-        result = subprocess.run(cmd, check=False)
+        env = os.environ.copy()
+        env["CONTENT_PATH"] = str(content_root)
+        env["DEMISTO_SDK_CONTENT_PATH"] = str(content_root)
+        
+        result = subprocess.run(cmd, check=False, env=env, cwd=str(content_root))
         if result.returncode == 0:
             click.echo("[OK] Upload completed successfully")
         else:
@@ -626,6 +666,13 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
         click.echo("[ERROR] demisto-sdk not found")
         click.echo("Install it with: pip install demisto-sdk")
         sys.exit(1)
+    finally:
+        if git_initialized:
+            try:
+                import shutil
+                shutil.rmtree(git_dir)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

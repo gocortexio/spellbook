@@ -11,14 +11,3 @@ services:
       - .:/content:rw
     # Default to showing help
     command: ["--help"]
-
-  # Development variant with shell access
-  dev:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/content:rw
-    entrypoint: ["/bin/bash"]
-    stdin_open: true
-    tty: true

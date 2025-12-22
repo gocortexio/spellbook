@@ -115,11 +115,11 @@ class PackTemplate:
             "currentVersion": "1.0.0",
             "author": author or self.defaults.get("author", ""),
             "url": self.defaults.get("url", ""),
-            "email": "",
+            "email": self.defaults.get("email", ""),
             "categories": categories or self.defaults.get("categories", []),
             "tags": self.defaults.get("tags", []),
-            "useCases": [],
-            "keywords": [],
+            "useCases": self.defaults.get("useCases", []),
+            "keywords": self.defaults.get("keywords", []),
             "marketplaces": self.defaults.get(
                 "marketplaces",
                 ["xsoar", "marketplacev2"]
@@ -362,24 +362,23 @@ alter
         notes_dir = pack_path / "ReleaseNotes"
         notes_dir.mkdir(exist_ok=True)
 
-        release_content = f"""
-#### Parsing Rules
+        release_content = f"""#### Parsing Rules
 
 ##### {pack_name} Parsing Rule
 
-New: Initial release of {pack_name} parsing rules.
+- Initial release of {pack_name} parsing rules.
 
 #### Modeling Rules
 
 ##### {pack_name} Modeling Rule
 
-New: Initial release of {pack_name} modelling rules for XDM mapping.
+- Initial release of {pack_name} modelling rules for XDM mapping.
 
 #### Correlation Rules
 
 ##### {pack_name} - Multiple Failed Login Attempts
 
-New: Initial release of brute force detection correlation rule.
+- Initial release of brute force detection correlation rule.
 """
 
         with open(notes_dir / "1_0_0.md", "w", encoding="utf-8") as f:

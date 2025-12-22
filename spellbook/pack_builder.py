@@ -103,6 +103,39 @@ class PackBuilder:
         """Get the full path to a pack directory."""
         return self.packs_dir / pack_name
 
+    def pack_exists(self, pack_name: str) -> bool:
+        """
+        Check if a pack exists and has valid metadata.
+
+        Args:
+            pack_name: Name of the pack to check.
+
+        Returns:
+            True if pack exists with pack_metadata.json, False otherwise.
+        """
+        pack_path = self.get_pack_path(pack_name)
+        metadata_path = pack_path / "pack_metadata.json"
+        return pack_path.exists() and metadata_path.exists()
+
+    def validate_pack_exists(self, pack_name: str) -> None:
+        """
+        Validate that a pack exists, raising a friendly error if not.
+
+        Args:
+            pack_name: Name of the pack to validate.
+
+        Raises:
+            SystemExit: If pack does not exist.
+        """
+        if not self.pack_exists(pack_name):
+            available = self.discover_packs()
+            print(f"[ERROR] Pack '{pack_name}' not found")
+            if available:
+                print(f"Available packs: {', '.join(available)}")
+            else:
+                print("No packs found in Packs/ directory")
+            raise SystemExit(1)
+
     def read_pack_metadata(self, pack_name: str) -> Dict:
         """
         Read pack metadata from pack_metadata.json.

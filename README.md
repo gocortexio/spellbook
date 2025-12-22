@@ -8,9 +8,19 @@ A Python toolset for building, validating, and packaging Cortex Platform content
 
 ## Overview
 
-Spellbook is a development workbench for creating Cortex Platform content. It provides tools for pack creation, validation, and packaging while keeping your content in a separate repository that you control.
+GoCortex Spellbook is a toolset for building, validating, and packaging Cortex Platform content packs. It solves the problem of creating compliant content packs without needing to understand the intricacies of the demisto-sdk and Cortex Platform schema requirements.
 
-The key design principle is separation of concerns: Spellbook is the tool, your content is yours. You create a content instance with Spellbook, then push that instance to your own Git repository.
+What it does:
+
+- Creates new content pack instances with correct structure
+- Generates XSIAM content templates (CorrelationRules, ParsingRules, ModelingRules)
+- Validates content against Cortex Platform schemas using demisto-sdk
+- Packages content into uploadable zip files
+- Uploads content directly to Cortex Platform instances
+
+Why it exists:
+
+The demisto-sdk is powerful but complex. Spellbook wraps it in a simpler interface and provides working templates that have been verified to upload successfully.
 
 ## Features
 
@@ -27,9 +37,9 @@ Choose your preferred method and follow the corresponding guide:
 
 | Method | Best For | Guide |
 |--------|----------|-------|
-| Docker (Local) | Most users. No Python setup required. | [README_LOCAL-DOCKER.md](DOCS/README_LOCAL-DOCKER.md) |
-| Source (Local) | Developers who want to modify Spellbook. | [README_SOURCE.md](DOCS/README_SOURCE.md) |
-| CI/CD | Automated builds triggered by Git tags. | [README_CICD.md](DOCS/README_CICD.md) |
+| Docker (Local) | Most users. No Python setup required. | [README_LOCAL-DOCKER.md](README_LOCAL-DOCKER.md) |
+| Source (Local) | Developers who want to modify Spellbook. | [README_SOURCE.md](README_SOURCE.md) |
+| CI/CD | Automated builds triggered by Git tags. | [README_CICD.md](README_CICD.md) |
 
 ## Quick Start (Docker)
 

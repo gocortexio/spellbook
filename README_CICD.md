@@ -1,5 +1,7 @@
 # GoCortex Spellbook - CI/CD Workflow
 
+GoCortex Spellbook is a toolset for building, validating, and packaging Cortex Platform content packs. It solves the problem of creating compliant content packs without needing to understand the intricacies of the demisto-sdk and Cortex Platform schema requirements.
+
 This guide walks you through setting up automated builds and validation using GitHub Actions.
 
 ---

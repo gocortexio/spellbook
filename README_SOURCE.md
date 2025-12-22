@@ -1,5 +1,7 @@
 # GoCortex Spellbook - Local Python Workflow
 
+GoCortex Spellbook is a toolset for building, validating, and packaging Cortex Platform content packs. It solves the problem of creating compliant content packs without needing to understand the intricacies of the demisto-sdk and Cortex Platform schema requirements.
+
 This guide walks you through building Cortex Platform content packs by running Spellbook directly from Python source.
 
 ---
@@ -190,11 +192,8 @@ Upload your pack directly to Cortex Platform using the API.
 First, set the required environment variables:
 
 ```bash
-# For Cortex Platform 6.x
 export DEMISTO_BASE_URL="https://your-cortex-instance.com"
 export DEMISTO_API_KEY="your-api-key"
-
-# For Cortex Platform 8.x (also set auth ID)
 export XSIAM_AUTH_ID="your-auth-id"
 ```
 
