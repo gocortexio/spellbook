@@ -87,7 +87,7 @@ After running `init`, your instance has this structure:
 ```
 my-content/
 |-- .github/workflows/      # CI/CD pipelines (if enabled)
-|   |-- build.yml           # Builds packs on version tags
+|   |-- conjure.yml          # Builds packs on version tags
 |   +-- validate.yml        # Validates packs on PRs
 |-- Packs/
 |   +-- SamplePack/         # Starter pack with examples
@@ -147,9 +147,12 @@ gocortex-spellbook bump-version SamplePack --minor
 
 # Increment major version (1.0.0 -> 2.0.0)
 gocortex-spellbook bump-version SamplePack --major
+
+# Bump version and create Git tag for CI/CD
+gocortex-spellbook bump-version SamplePack --tag
 ```
 
-Git tags (format: `PackName-v1.0.0`) can be used to trigger CI/CD builds but are not required for local development.
+The `--tag` flag creates a Git tag in the format `PackName-v1.0.1` which triggers CI/CD builds when pushed. Use `git push origin PackName-v1.0.1` after tagging.
 
 ## Licence
 

@@ -280,3 +280,4 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Show version | python spellbook.py version PackName -c my-content/spellbook.yaml |
 | Set version | python spellbook.py set-version PackName X.Y.Z -c my-content/spellbook.yaml |
 | Bump version | python spellbook.py bump-version PackName -c my-content/spellbook.yaml |
+| Bump and tag | python spellbook.py bump-version PackName --tag -c my-content/spellbook.yaml |

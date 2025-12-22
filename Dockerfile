@@ -5,7 +5,7 @@ FROM python:3.11-slim-bookworm
 
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
-LABEL version="1.17.1"
+LABEL version="1.17.3"
 LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
 LABEL org.opencontainers.image.licenses="MIT"
@@ -32,11 +32,18 @@ COPY spellbook/ ./spellbook/
 COPY spellbook.py ./
 COPY spellbook.yaml ./
 
-# Create mount point for user content
-RUN mkdir -p /content
+# Create non-root user for security
+RUN groupadd --gid 1000 spellbook && \
+    useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home spellbook
+
+# Create mount point for user content with correct ownership
+RUN mkdir -p /content && chown -R spellbook:spellbook /app /content
 
 # Suppress demisto-sdk content repository warning (we handle pack structure ourselves)
 ENV DEMISTO_SDK_IGNORE_CONTENT_WARNING=true
+
+# Switch to non-root user
+USER spellbook
 
 # Set working directory to the mount point for user operations
 WORKDIR /content

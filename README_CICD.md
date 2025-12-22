@@ -54,7 +54,7 @@ Note: The -s flag signs your commit, which is required by some organisations.
 
 Your instance includes two workflow files in .github/workflows/:
 
-- build.yml - Builds packs when tags are pushed
+- conjure.yml - Builds packs when tags are pushed
 - validate.yml - Validates packs on pull requests and pushes to main
 
 These workflows are pre-configured to use the official Spellbook image (`ghcr.io/gocortexio/spellbook:latest`). No additional configuration is required.
@@ -216,7 +216,7 @@ This warning can be safely ignored. It appears because demisto-sdk expects a spe
 
 [ERROR] Tag push does not trigger the workflow
 
-Check that your tag matches the pattern in build.yml:
+Check that your tag matches the pattern in conjure.yml:
 
 ```yaml
 on:
@@ -231,7 +231,7 @@ Tags must contain "-v" to trigger the workflow (for example, SamplePack-v1.0.0).
 
 ## Workflow Files Reference
 
-build.yml triggers:
+conjure.yml triggers:
 
 - Push of tags matching *-v* pattern
 - Manual workflow dispatch with optional pack name

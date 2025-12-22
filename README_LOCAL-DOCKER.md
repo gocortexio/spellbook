@@ -271,3 +271,4 @@ All commands below assume you are in the my-content directory:
 | Bump revision | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --revision |
 | Bump minor | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --minor |
 | Bump major | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --major |
+| Bump and tag | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --tag |

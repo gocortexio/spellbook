@@ -124,6 +124,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
     steps:
       - name: Download artefacts
         uses: actions/download-artifact@v4
@@ -139,8 +141,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 '''
-        build_path = workflows_dir / "build.yml"
-        with open(build_path, "w", encoding="utf-8") as f:
+        conjure_path = workflows_dir / "conjure.yml"
+        with open(conjure_path, "w", encoding="utf-8") as f:
             f.write(build_workflow)
 
         validate_workflow = '''name: Validate Content Packs
@@ -271,7 +273,7 @@ htmlcov/
 
 This repository includes GitHub Actions workflows for automated builds and validation.
 
-Before using the workflows, update the Docker image reference in `.github/workflows/build.yml`
+Before using the workflows, update the Docker image reference in `.github/workflows/conjure.yml`
 and `.github/workflows/validate.yml` to point to your published Spellbook image.
 
 ### Version Tagging
