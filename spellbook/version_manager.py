@@ -25,6 +25,26 @@ class VersionManager:
         """
         self.tag_pattern = tag_pattern
 
+    def is_git_repository(self) -> bool:
+        """
+        Check if the current directory is within a Git repository.
+
+        Returns:
+            True if in a Git repository, False otherwise.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--git-dir"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return bool(result.stdout.strip())
+        except subprocess.CalledProcessError:
+            return False
+        except FileNotFoundError:
+            return False
+
     def get_git_tags(self) -> list:
         """
         Retrieve all Git tags from the repository.

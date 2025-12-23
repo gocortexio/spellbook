@@ -105,6 +105,7 @@ jobs:
 
       - name: Build packs
         run: |
+          mkdir -p artifacts
           docker run --rm \\
             -v ${{ github.workspace }}/Packs:/content/Packs \\
             -v ${{ github.workspace }}/artifacts:/content/artifacts \\

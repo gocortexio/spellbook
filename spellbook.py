@@ -344,6 +344,10 @@ def version(pack_name, config):
     click.echo(f"  Current version: {current}")
     click.echo(f"  Next version:    {next_version}")
 
+    if vm.is_git_repository():
+        git_tag = f"{pack_name}-v{next_version}"
+        click.echo(f"  Git tag:         {git_tag}")
+
 
 @cli.command()
 @click.argument("pack_name")
