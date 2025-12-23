@@ -106,7 +106,7 @@ jobs:
       - name: Build packs
         run: |
           mkdir -p artifacts
-          docker run --rm \\
+          docker run --rm --user $(id -u):$(id -g) \\
             -v ${{ github.workspace }}/Packs:/content/Packs \\
             -v ${{ github.workspace }}/artifacts:/content/artifacts \\
             -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \\

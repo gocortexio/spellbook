@@ -186,21 +186,23 @@ The Spellbook Docker image is not accessible to the GitHub Actions runner. Check
 
 [ERROR] Workflow fails with "permission denied" on volume mounts
 
-The Spellbook container runs as a non-root user for security. When Docker mounts a directory that does not exist, it creates it as root, which prevents the container from writing to it.
+The Spellbook container runs as a non-root user (UID 1000) for security. The GitHub Actions runner uses a different UID (typically 1001), causing permission mismatches when writing to mounted volumes.
 
-For the artifacts directory, create it before running Docker:
+The solution is to run the container as the same user as the runner:
 
 ```yaml
 - name: Build packs
   run: |
     mkdir -p artifacts
-    docker run --rm \
+    docker run --rm --user $(id -u):$(id -g) \
       -v ${{ github.workspace }}/Packs:/content/Packs \
       -v ${{ github.workspace }}/artifacts:/content/artifacts \
       -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
       ghcr.io/gocortexio/spellbook:latest \
       build --all --no-validate
 ```
+
+The --user flag ensures the container process runs with the same UID/GID as the runner, allowing it to write to directories created by the runner.
 
 Also ensure your workflow uses ${{ github.workspace }} for volume mounts:
 

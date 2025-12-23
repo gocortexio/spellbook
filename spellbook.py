@@ -338,15 +338,17 @@ def version(pack_name, config):
 
     metadata = builder.read_pack_metadata(pack_name)
     current = metadata.get("currentVersion", "unknown")
-    next_version = vm.increment_version(current, "revision")
 
     click.echo(f"Pack: {pack_name}")
-    click.echo(f"  Current version: {current}")
-    click.echo(f"  Next version:    {next_version}")
+    click.echo(f"  Version:    {current}")
 
     if vm.is_git_repository():
-        git_tag = f"{pack_name}-v{next_version}"
-        click.echo(f"  Git tag:         {git_tag}")
+        latest_tag_version = vm.get_latest_version(pack_name)
+        if latest_tag_version != vm.DEFAULT_VERSION or vm.get_git_tags():
+            latest_tag = f"{pack_name}-v{latest_tag_version}"
+            click.echo(f"  Latest tag: {latest_tag}")
+        else:
+            click.echo("  Latest tag: (none)")
 
 
 @cli.command()
@@ -419,7 +421,24 @@ def bump_version(pack_name, major, minor, revision, tag, config):
         increment_type = "revision"
 
     metadata = builder.read_pack_metadata(pack_name)
-    current_version = metadata.get("currentVersion", "1.0.0")
+    metadata_version = metadata.get("currentVersion", "1.0.0")
+
+    if tag:
+        tag_version = builder.version_manager.get_latest_version(pack_name)
+        has_pack_tags = any(
+            builder.version_manager.parse_tag(t, pack_name)
+            for t in builder.version_manager.get_git_tags()
+        )
+        if has_pack_tags:
+            current_version = max(
+                [metadata_version, tag_version],
+                key=lambda v: builder.version_manager._version_tuple(v)
+            )
+        else:
+            current_version = metadata_version
+    else:
+        current_version = metadata_version
+
     new_version = builder.version_manager.increment_version(
         current_version, increment_type
     )
