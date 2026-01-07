@@ -262,7 +262,7 @@ def validate_all(config):
         click.echo(f"\n[FAIL] Validation failed for: {', '.join(failed)}")
         sys.exit(1)
     else:
-        click.echo(f"\n[PASS] All {len(packs)} packs validated successfully")
+        click.echo(f"\n[PASS] All {len(packs)} packs validated")
 
 
 @cli.command()
@@ -482,6 +482,21 @@ def bump_version(pack_name, major, minor, revision, tag, config):
     if tag:
         tag_name = f"{pack_name}-v{new_version}"
         try:
+            metadata_path = pack_path / "pack_metadata.json"
+            subprocess.run(
+                ["git", "add", str(metadata_path), str(release_notes_path)],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            commit_message = f"{pack_name} v{new_version}"
+            subprocess.run(
+                ["git", "commit", "-m", commit_message],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            click.echo(f"[OK] Committed: {commit_message}")
             result = subprocess.run(
                 ["git", "tag", tag_name],
                 capture_output=True,
@@ -489,7 +504,7 @@ def bump_version(pack_name, major, minor, revision, tag, config):
                 check=True
             )
             click.echo(f"[OK] Created Git tag: {tag_name}")
-            click.echo(f"     Push with: git push origin {tag_name}")
+            click.echo(f"     Push with: git push && git push origin {tag_name}")
         except subprocess.CalledProcessError as e:
             click.echo(f"[WARN] Failed to create Git tag: {e.stderr.strip()}")
         except FileNotFoundError:
@@ -681,7 +696,7 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
         
         result = subprocess.run(cmd, check=False, env=env, cwd=str(content_root))
         if result.returncode == 0:
-            click.echo("[OK] Upload completed successfully")
+            click.echo("[OK] Upload completed")
         else:
             click.echo("[FAIL] Upload failed")
             sys.exit(result.returncode)

@@ -59,6 +59,7 @@ class InstanceManager:
 
         if include_ci:
             self._create_github_workflows(instance_path)
+            self._create_gitlab_workflows(instance_path)
 
         self._create_spellbook_config(instance_path, author)
 
@@ -183,6 +184,81 @@ jobs:
         with open(validate_path, "w", encoding="utf-8") as f:
             f.write(validate_workflow)
 
+    def _create_gitlab_workflows(self, instance_path: Path) -> None:
+        """Create GitLab CI/CD pipeline configuration."""
+        gitlab_ci = '''stages:
+  - validate
+  - build
+  - release
+
+variables:
+  DOCKER_DRIVER: overlay2
+
+validate_packs:
+  stage: validate
+  image: docker:25.0
+  services:
+    - docker:25.0-dind
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes:
+        - Packs/**/*
+    - if: $CI_COMMIT_BRANCH =~ /^(main|master)$/
+      changes:
+        - Packs/**/*
+  script:
+    - |
+      docker run --rm \\
+        -v ${CI_PROJECT_DIR}/Packs:/content/Packs \\
+        -v ${CI_PROJECT_DIR}/spellbook.yaml:/content/spellbook.yaml \\
+        ghcr.io/gocortexio/spellbook:latest \\
+        validate-all
+
+build_packs:
+  stage: build
+  image: docker:25.0
+  services:
+    - docker:25.0-dind
+  rules:
+    - if: $CI_COMMIT_TAG =~ /.*-v.*/
+    - if: $CI_PIPELINE_SOURCE == "web"
+  before_script:
+    - mkdir -p artifacts
+    - chmod 777 artifacts
+  script:
+    - |
+      docker run --rm \\
+        -v ${CI_PROJECT_DIR}/Packs:/content/Packs \\
+        -v ${CI_PROJECT_DIR}/artifacts:/content/artifacts \\
+        -v ${CI_PROJECT_DIR}/spellbook.yaml:/content/spellbook.yaml \\
+        ghcr.io/gocortexio/spellbook:latest \\
+        build --all --no-validate
+  artifacts:
+    paths:
+      - artifacts/*.zip
+    expire_in: 30 days
+
+create_release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /.*-v.*/
+  needs:
+    - build_packs
+  script:
+    - echo "Creating release for ${CI_COMMIT_TAG}"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: "Release ${CI_COMMIT_TAG}"
+    assets:
+      links:
+        - name: "Content Pack Artefacts"
+          url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/download"
+'''
+        gitlab_ci_path = instance_path / ".gitlab-ci.yml"
+        with open(gitlab_ci_path, "w", encoding="utf-8") as f:
+            f.write(gitlab_ci)
+
     def _create_spellbook_config(
         self,
         instance_path: Path,
@@ -227,6 +303,14 @@ jobs:
 artifacts/
 *.zip
 
+# Secrets and credentials (never commit these)
+*.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
 # Python
 __pycache__/
 *.py[cod]
@@ -238,10 +322,13 @@ venv/
 .idea/
 .vscode/
 *.swp
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # Demisto SDK
 .demisto-sdk-conf
@@ -253,6 +340,9 @@ demistomock.py
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Logs
+*.log
 '''
         gitignore_path = instance_path / ".gitignore"
         with open(gitignore_path, "w", encoding="utf-8") as f:

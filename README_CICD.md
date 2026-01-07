@@ -2,14 +2,14 @@
 
 GoCortex Spellbook is a toolset for building, validating, and packaging Cortex Platform content packs. It solves the problem of creating compliant content packs without needing to understand the intricacies of the demisto-sdk and Cortex Platform schema requirements.
 
-This guide walks you through setting up automated builds and validation using GitHub Actions.
+This guide walks you through setting up automated builds and validation using GitHub Actions or GitLab CI/CD. Both platforms are supported and can coexist in the same repository.
 
 ---
 
 ## Prerequisites
 
 - Docker installed locally (for testing)
-- GitHub repository for your content
+- GitHub or GitLab repository for your content
 - Access to a container registry (GitHub Container Registry, Docker Hub, or similar)
 
 ---
@@ -46,7 +46,7 @@ git remote add origin git@github.com:your-org/my-content.git
 git push -u origin main
 ```
 
-Note: The -s flag signs your commit, which is required by some organisations.
+The -s flag signs your commit, which is required by some organisations.
 
 ---
 
@@ -115,10 +115,14 @@ docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version Sam
 docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --major
 
 # Bump version and create a Git tag for CI/CD triggering
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --tag
+# Note: Mount your git config so the container can create commits and tags
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack --tag
 ```
 
-The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers the build workflow automatically.
+The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers the build workflow automatically. Mounting your git config allows the container to use your Git identity for commits and tags.
 
 ---
 
@@ -174,13 +178,142 @@ Add a check for naming consistency:
 
 ---
 
+## GitLab CI/CD Pipelines
+
+Your instance also includes a .gitlab-ci.yml file for GitLab CI/CD. This provides equivalent functionality to the GitHub Actions workflows.
+
+### Pipeline Stages
+
+The GitLab pipeline has three stages:
+
+1. validate - Runs on merge requests and pushes to main/master when Packs/ changes
+2. build - Runs when tags matching *-v* are pushed or on manual trigger
+3. release - Creates a GitLab release with artefacts attached
+
+### GitLab Variables
+
+The pipeline uses these predefined GitLab CI/CD variables:
+
+- CI_PROJECT_DIR - The directory where the repository is cloned
+- CI_COMMIT_TAG - The tag name when a tag is pushed
+- CI_MERGE_REQUEST_ID - Set when running on a merge request
+- CI_COMMIT_BRANCH - The branch name
+- CI_PIPELINE_SOURCE - How the pipeline was triggered (push, web, etc.)
+
+### Manual Pipeline Trigger
+
+To manually trigger a build in GitLab:
+
+1. Go to CI/CD > Pipelines in your project
+2. Click "Run pipeline"
+3. Select the branch or tag to build
+4. Click "Run pipeline"
+
+### GitLab Container Registry
+
+To use GitLab Container Registry instead of GitHub Container Registry, update the image reference in .gitlab-ci.yml:
+
+```yaml
+ghcr.io/gocortexio/spellbook:latest
+```
+
+Replace with your own registry if you host a copy of the Spellbook image.
+
+### Docker-in-Docker Requirements
+
+The GitLab pipeline uses Docker-in-Docker (dind) to run containers. Your GitLab Runner must be configured with:
+
+- Docker executor
+- Privileged mode enabled
+
+If your runner does not support privileged mode, consider using a shell executor or Kubernetes executor with appropriate permissions.
+
+---
+
+## Uploading Packs to Cortex Platform
+
+Spellbook can upload content packs directly to your Cortex Platform instance using the upload command.
+
+### Required Environment Variables
+
+The upload command requires credentials to authenticate with your Cortex instance:
+
+- DEMISTO_BASE_URL - Your Cortex Platform instance URL
+- DEMISTO_API_KEY - API key with Instance Administrator role
+- XSIAM_AUTH_ID - Authentication ID (required for XSIAM only)
+
+### Upload Examples
+
+Upload a pack directory to XSOAR:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -e DEMISTO_BASE_URL="https://your-instance.demisto.com" \
+  -e DEMISTO_API_KEY="your-api-key" \
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack
+```
+
+Upload to XSIAM (requires auth ID and --xsiam flag):
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
+  -e DEMISTO_API_KEY="your-api-key" \
+  -e XSIAM_AUTH_ID="your-auth-id" \
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
+```
+
+Upload a built zip file:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
+  -e DEMISTO_API_KEY="your-api-key" \
+  -e XSIAM_AUTH_ID="your-auth-id" \
+  ghcr.io/gocortexio/spellbook upload artifacts/SamplePack-1.0.0.zip --zip --xsiam
+```
+
+### Using an Environment File
+
+To avoid typing credentials each time, store them in a .env file:
+
+```bash
+# .env (this file is automatically excluded from Git)
+DEMISTO_BASE_URL=https://your-instance.xdr.paloaltonetworks.com
+DEMISTO_API_KEY=your-api-key
+XSIAM_AUTH_ID=your-auth-id
+```
+
+Then use --env-file to load the credentials:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  --env-file .env \
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
+```
+
+The .env file is included in .gitignore by default to prevent accidental commits of credentials.
+
+### Upload Options
+
+- --zip - Treat input as a zip file rather than a directory
+- --xsiam - Upload to XSIAM (requires XSIAM_AUTH_ID)
+- --insecure - Skip SSL certificate verification
+- --skip-validation - Skip pack validation before upload
+
+---
+
 ## Troubleshooting
 
 [ERROR] Workflow fails with "image not found"
 
 The Spellbook Docker image is not accessible to the GitHub Actions runner. Check that:
 
-- The image was pushed to the registry successfully
+- The image was pushed to the registry
 - The image path in the workflow file matches exactly
 - For private registries, the repository has access configured
 

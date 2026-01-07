@@ -290,8 +290,8 @@ class PackBuilder:
         """
         Lint a pack using demisto-sdk pre-commit.
 
-        Note: The standalone lint command was removed from demisto-sdk
-        in 2024, so we use the pre-commit hook instead.
+        The standalone lint command was removed from demisto-sdk
+        in 2024. This method uses the pre-commit hook instead.
 
         Args:
             pack_name: Name of the pack to lint.

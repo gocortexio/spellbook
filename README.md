@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/spellbook-logo.png" alt="GoCortex Spellbook" width="600">
+  <img src="assets/spellbook-logo.png" alt="GoCortex Spellbook" width="800">
 </p>
 
 # GoCortex Spellbook

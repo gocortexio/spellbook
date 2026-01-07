@@ -232,8 +232,27 @@ docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyN
 docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack --major
 
 # Bump version and create a Git tag
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
+# Note: Mount your git config so the container can create commits and tags
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
 ```
+
+---
+
+## Git Configuration for Tagging
+
+When using the `--tag` flag with `bump-version`, the container needs access to your Git identity to create commits and tags. Mount your local git config file:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
+```
+
+The `:ro` suffix mounts the file as read-only for security. Without this mount, you will see the error "Author identity unknown".
 
 ---
 
@@ -271,4 +290,4 @@ All commands below assume you are in the my-content directory:
 | Bump revision | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --revision |
 | Bump minor | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --minor |
 | Bump major | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --major |
-| Bump and tag | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --tag |
+| Bump and tag | See "Git Configuration for Tagging" section above |
