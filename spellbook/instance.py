@@ -189,6 +189,7 @@ jobs:
         gitlab_ci = '''stages:
   - validate
   - build
+  - upload
   - release
 
 variables:
@@ -214,29 +215,63 @@ validate_packs:
         ghcr.io/gocortexio/spellbook:latest \\
         validate-all
 
-build_packs:
+build_pack:
   stage: build
   image: docker:25.0
   services:
     - docker:25.0-dind
   rules:
     - if: $CI_COMMIT_TAG =~ /.*-v.*/
-    - if: $CI_PIPELINE_SOURCE == "web"
   before_script:
     - mkdir -p artifacts
     - chmod 777 artifacts
   script:
     - |
+      # Extract pack name and version from tag (e.g., SamplePack-v1.0.3)
+      PACK_NAME=$(echo "${CI_COMMIT_TAG}" | sed 's/-v[0-9].*$//')
+      PACK_VERSION=$(echo "${CI_COMMIT_TAG}" | sed 's/.*-v//')
+      echo "Building pack: ${PACK_NAME} version: ${PACK_VERSION}"
+      # Write variables to dotenv file for downstream jobs
+      echo "PACK_NAME=${PACK_NAME}" > build.env
+      echo "PACK_VERSION=${PACK_VERSION}" >> build.env
+      # Build the specific pack
       docker run --rm \\
         -v ${CI_PROJECT_DIR}/Packs:/content/Packs \\
         -v ${CI_PROJECT_DIR}/artifacts:/content/artifacts \\
         -v ${CI_PROJECT_DIR}/spellbook.yaml:/content/spellbook.yaml \\
         ghcr.io/gocortexio/spellbook:latest \\
-        build --all --no-validate
+        build "${PACK_NAME}" --no-validate
+      # Verify the zip was created
+      ls -la artifacts/
   artifacts:
     paths:
       - artifacts/*.zip
+      - build.env
+    reports:
+      dotenv: build.env
     expire_in: 30 days
+
+upload_to_registry:
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /.*-v.*/
+  needs:
+    - job: build_pack
+      artifacts: true
+  script:
+    - |
+      ZIP_FILE="artifacts/${PACK_NAME}-v${PACK_VERSION}.zip"
+      if [ ! -f "${ZIP_FILE}" ]; then
+        echo "[ERROR] Expected file not found: ${ZIP_FILE}"
+        echo "Available files:"
+        ls -la artifacts/
+        exit 1
+      fi
+      echo "Uploading ${ZIP_FILE} to Package Registry..."
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \\
+           --upload-file "${ZIP_FILE}" \\
+           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/content-packs/${PACK_VERSION}/${PACK_NAME}-v${PACK_VERSION}.zip"
 
 create_release:
   stage: release
@@ -244,7 +279,9 @@ create_release:
   rules:
     - if: $CI_COMMIT_TAG =~ /.*-v.*/
   needs:
-    - build_packs
+    - job: build_pack
+      artifacts: true
+    - job: upload_to_registry
   script:
     - echo "Creating release for ${CI_COMMIT_TAG}"
   release:
@@ -252,8 +289,9 @@ create_release:
     description: "Release ${CI_COMMIT_TAG}"
     assets:
       links:
-        - name: "Content Pack Artefacts"
-          url: "${CI_PROJECT_URL}/-/jobs/${CI_JOB_ID}/artifacts/download"
+        - name: "${PACK_NAME}-v${PACK_VERSION}.zip"
+          url: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/content-packs/${PACK_VERSION}/${PACK_NAME}-v${PACK_VERSION}.zip"
+          link_type: package
 '''
         gitlab_ci_path = instance_path / ".gitlab-ci.yml"
         with open(gitlab_ci_path, "w", encoding="utf-8") as f:
@@ -393,9 +431,11 @@ This repository contains Cortex Platform content packs built using GoCortex Spel
 |   +-- SamplePack/         # Starter pack with examples
 |       |-- pack_metadata.json
 |       |-- README.md
-|       |-- Integrations/
-|       |-- Scripts/
-|       +-- Playbooks/
+|       |-- CorrelationRules/
+|       |-- ParsingRules/
+|       |-- ModelingRules/
+|       |-- XSIAMDashboards/
+|       +-- ReleaseNotes/
 {ci_structure}|-- artifacts/              # Built pack zip files
 +-- spellbook.yaml          # Build configuration
 ```
@@ -406,10 +446,12 @@ Build packs locally using Docker. The built zip files appear in the `artifacts/`
 
 ```bash
 # Build all packs (run from this directory)
-docker run --rm -v $(pwd):/content gocortex-spellbook build --all
+docker run --rm -v $(pwd):/content \\
+  ghcr.io/gocortexio/spellbook:latest build --all
 
 # Build a specific pack
-docker run --rm -v $(pwd):/content gocortex-spellbook build SamplePack
+docker run --rm -v $(pwd):/content \\
+  ghcr.io/gocortexio/spellbook:latest build SamplePack
 
 # The zip files are created in artifacts/
 ls artifacts/
@@ -418,29 +460,38 @@ ls artifacts/
 ## Creating a New Pack
 
 ```bash
-docker run --rm -v $(pwd):/content gocortex-spellbook create MyNewPack --description "My new pack"
+docker run --rm -v $(pwd):/content \\
+  ghcr.io/gocortexio/spellbook:latest create MyNewPack --description "My new pack"
 ```
 
 ## Validating Packs
 
 ```bash
 # Validate all packs
-docker run --rm -v $(pwd):/content gocortex-spellbook validate-all
+docker run --rm -v $(pwd):/content \\
+  ghcr.io/gocortexio/spellbook:latest validate-all
 
 # Validate a specific pack
-docker run --rm -v $(pwd):/content gocortex-spellbook validate SamplePack
+docker run --rm -v $(pwd):/content \\
+  ghcr.io/gocortexio/spellbook:latest validate SamplePack
 ```
 {ci_section}
 ## Uploading to Cortex Platform
 
-After building, upload the zip files from `artifacts/` to your Cortex Platform tenant:
+Upload packs directly to your Cortex Platform tenant. Set the environment variables first,
+then pass them through to Docker:
 
 ```bash
+export DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com"
+export DEMISTO_API_KEY="your-api-key"
+export XSIAM_AUTH_ID="your-auth-id"
+
 docker run --rm -v $(pwd):/content \\
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\
   -e DEMISTO_BASE_URL \\
   -e DEMISTO_API_KEY \\
   -e XSIAM_AUTH_ID \\
-  gocortex-spellbook upload Packs/SamplePack --zip --xsiam
+  ghcr.io/gocortexio/spellbook:latest upload Packs/SamplePack --xsiam
 ```
 
 ## References

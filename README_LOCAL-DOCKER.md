@@ -35,7 +35,10 @@ docker build -t ghcr.io/gocortexio/spellbook .
 Run this command from the directory where you want your content instance created:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation"
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation"
 ```
 
 This creates a my-content folder containing:
@@ -47,7 +50,10 @@ This creates a my-content folder containing:
 To skip GitHub Actions (Docker-only workflow):
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation" --no-ci
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation" --no-ci
 ```
 
 ---
@@ -78,7 +84,10 @@ git push -u origin main
 Your instance includes a SamplePack with example content. List the available packs:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook list-packs
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook list-packs
 ```
 
 The SamplePack contains starter templates for common content types including integrations, scripts, playbooks, and Cortex Platform content like modelling rules and parsing rules.
@@ -90,7 +99,10 @@ The SamplePack contains starter templates for common content types including int
 [WARNING] Always use the create command to make new packs. Never copy existing packs directly, as this causes naming conflicts during upload.
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook create MyNewPack --description "My new content pack"
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook create MyNewPack --description "My new content pack"
 ```
 
 This creates a properly structured pack with all required metadata files.
@@ -102,7 +114,10 @@ This creates a properly structured pack with all required metadata files.
 If you have copied content items from another pack, the internal names will not match your pack name. This causes upload failures. Fix this by running:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook rename-content MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook rename-content MyNewPack
 ```
 
 This command updates all content item names and IDs to match your pack name.
@@ -114,13 +129,19 @@ This command updates all content item names and IDs to match your pack name.
 Validation checks your pack against demisto-sdk rules:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook validate MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook validate MyNewPack
 ```
 
 To validate all packs at once:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook validate-all
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook validate-all
 ```
 
 ---
@@ -130,7 +151,10 @@ docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook validate-all
 Linting runs additional code quality checks using demisto-sdk pre-commit hooks:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook lint MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook lint MyNewPack
 ```
 
 This step is optional but recommended before uploading to production systems.
@@ -142,13 +166,19 @@ This step is optional but recommended before uploading to production systems.
 Building creates a distributable zip file in the artefacts directory:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook build MyNewPack
 ```
 
 To build all packs:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build --all
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook build --all
 ```
 
 The zip files appear in my-content/artifacts/:
@@ -156,8 +186,8 @@ The zip files appear in my-content/artifacts/:
 ```
 my-content/
 +-- artifacts/
-    +-- MyNewPack-1.0.0.zip
-    +-- SamplePack-1.0.0.zip
+    +-- MyNewPack-v1.0.0.zip
+    +-- SamplePack-v1.0.0.zip
 ```
 
 ---
@@ -169,7 +199,7 @@ Upload your pack directly to Cortex Platform using the API.
 First, set the required environment variables:
 
 ```bash
-export DEMISTO_BASE_URL="https://your-cortex-instance.com"
+export DEMISTO_BASE_URL="https://your-cortex-instance.xdr.paloaltonetworks.com"
 export DEMISTO_API_KEY="your-api-key"
 export XSIAM_AUTH_ID="your-auth-id"
 ```
@@ -177,25 +207,31 @@ export XSIAM_AUTH_ID="your-auth-id"
 Then upload:
 
 ```bash
-# Upload to Cortex Platform
-docker run --rm -v $(pwd):/content \
+# Upload to XSIAM
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL \
   -e DEMISTO_API_KEY \
   -e XSIAM_AUTH_ID \
-  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --zip --xsiam
+  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --xsiam
 
-# Upload a pre-built zip file
-docker run --rm -v $(pwd):/content \
+# Upload to XSOAR (no XSIAM_AUTH_ID or --xsiam flag needed)
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL \
   -e DEMISTO_API_KEY \
-  -e XSIAM_AUTH_ID \
-  ghcr.io/gocortexio/spellbook upload artifacts/MyNewPack-1.0.0.zip
+  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack
 
 # Upload with insecure connection (skip certificate validation)
-docker run --rm -v $(pwd):/content \
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL \
   -e DEMISTO_API_KEY \
-  ghcr.io/gocortexio/spellbook upload artifacts/MyNewPack-1.0.0.zip --insecure
+  -e XSIAM_AUTH_ID \
+  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --xsiam --insecure
 ```
 
 ---
@@ -207,32 +243,49 @@ Spellbook provides commands for managing pack versions.
 Show current version information:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook version MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook version MyNewPack
 ```
 
 Set a specific version:
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook set-version MyNewPack 2.0.0
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook set-version MyNewPack 2.0.0
 ```
 
 Bump version automatically:
 
 ```bash
 # Bump revision (1.0.0 -> 1.0.1) - default behaviour
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack
 
 # Bump revision explicitly (1.0.0 -> 1.0.1)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack --revision
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --revision
 
 # Bump minor version (1.0.0 -> 1.1.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack --minor
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --minor
 
 # Bump major version (1.0.0 -> 2.0.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version MyNewPack --major
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --major
 
 # Bump version and create a Git tag
-# Note: Mount your git config so the container can create commits and tags
 docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
@@ -272,22 +325,31 @@ This is informational text about GitHub Actions validation. It does not indicate
 
 ## Command Reference
 
-All commands below assume you are in the my-content directory:
+All commands below assume you are in the my-content directory. The standard Docker invocation is:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook <command>
+```
+
+Replace `<command>` with any of the following:
 
 | Action | Command |
 |--------|---------|
-| List packs | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook list-packs |
-| Create pack | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook create PackName |
-| Rename content | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook rename-content PackName |
-| Validate pack | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook validate PackName |
-| Validate all | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook validate-all |
-| Lint pack | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook lint PackName |
-| Build pack | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build PackName |
-| Build all | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build --all |
-| Show version | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook version PackName |
-| Set version | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook set-version PackName X.Y.Z |
-| Bump version | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName |
-| Bump revision | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --revision |
-| Bump minor | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --minor |
-| Bump major | docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version PackName --major |
-| Bump and tag | See "Git Configuration for Tagging" section above |
+| List packs | list-packs |
+| Create pack | create PackName |
+| Rename content | rename-content PackName |
+| Validate pack | validate PackName |
+| Validate all | validate-all |
+| Lint pack | lint PackName |
+| Build pack | build PackName |
+| Build all | build --all |
+| Show version | version PackName |
+| Set version | set-version PackName X.Y.Z |
+| Bump version | bump-version PackName |
+| Bump revision | bump-version PackName --revision |
+| Bump minor | bump-version PackName --minor |
+| Bump major | bump-version PackName --major |
+| Bump and tag | bump-version PackName --tag |

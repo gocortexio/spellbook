@@ -3,9 +3,10 @@
 
 FROM python:3.11-alpine
 
+ARG SPELLBOOK_VERSION=1.18.10
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
-LABEL version="1.18.0"
+LABEL version="${SPELLBOOK_VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
 LABEL org.opencontainers.image.licenses="MIT"

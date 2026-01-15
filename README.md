@@ -48,10 +48,13 @@ Choose your preferred method and follow the corresponding guide:
 docker pull ghcr.io/gocortexio/spellbook:latest
 
 # Or build locally from source
-docker build -t ghcr.io/gocortexio/spellbook .
+docker build -t gocortex-spellbook .
 
 # Create a content instance
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "My Organisation"
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook init my-content --author "My Organisation"
 
 # Initialise Git (required for validation)
 cd my-content
@@ -60,7 +63,10 @@ git add .
 git commit -s -m "Initial commit"
 
 # Build all packs
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook build --all
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook build --all
 ```
 
 ## Commands

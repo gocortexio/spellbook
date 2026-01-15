@@ -179,8 +179,8 @@ The zip files appear in my-content/artifacts/:
 ```
 my-content/
 +-- artifacts/
-    +-- MyNewPack-1.0.0.zip
-    +-- SamplePack-1.0.0.zip
+    +-- MyNewPack-v1.0.0.zip
+    +-- SamplePack-v1.0.0.zip
 ```
 
 ---
@@ -192,7 +192,7 @@ Upload your pack directly to Cortex Platform using the API.
 First, set the required environment variables:
 
 ```bash
-export DEMISTO_BASE_URL="https://your-cortex-instance.com"
+export DEMISTO_BASE_URL="https://your-cortex-instance.xdr.paloaltonetworks.com"
 export DEMISTO_API_KEY="your-api-key"
 export XSIAM_AUTH_ID="your-auth-id"
 ```
@@ -200,14 +200,14 @@ export XSIAM_AUTH_ID="your-auth-id"
 Then upload:
 
 ```bash
-# Upload to Cortex Platform
-python spellbook.py upload my-content/Packs/MyNewPack --zip --xsiam
+# Upload to XSIAM
+python spellbook.py upload my-content/Packs/MyNewPack --xsiam
 
-# Upload a pre-built zip file
-python spellbook.py upload my-content/artifacts/MyNewPack-1.0.0.zip
+# Upload to XSOAR (no XSIAM_AUTH_ID or --xsiam flag needed)
+python spellbook.py upload my-content/Packs/MyNewPack
 
 # Upload with insecure connection (skip certificate validation)
-python spellbook.py upload my-content/artifacts/MyNewPack-1.0.0.zip --insecure
+python spellbook.py upload my-content/Packs/MyNewPack --xsiam --insecure
 ```
 
 ---

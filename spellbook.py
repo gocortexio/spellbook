@@ -18,6 +18,71 @@ from spellbook.pack_builder import PackBuilder
 from spellbook.pack_template import PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
+from spellbook.xsiam_validator import XSIAMValidator
+
+
+def get_version_info():
+    """Get version information for spellbook, demisto-sdk, and Python."""
+    import sys
+    try:
+        from importlib.metadata import version
+        sdk_version = version("demisto-sdk")
+    except Exception:
+        sdk_version = "unknown"
+    
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    
+    return {
+        "spellbook": __version__,
+        "demisto_sdk": sdk_version,
+        "python": python_version
+    }
+
+
+def check_environment(config_path: str, require_packs: bool = True) -> bool:
+    """Check that required files and directories exist.
+    
+    Returns True if all checks pass, otherwise prints error and exits.
+    """
+    config_file = Path(config_path)
+    
+    if not config_file.exists():
+        click.echo("")
+        click.echo(f"[ERROR] Configuration file not found: {config_path}")
+        click.echo("")
+        click.echo("  This file is required to run Spellbook commands.")
+        click.echo("")
+        if config_path == "spellbook.yaml":
+            click.echo("  When using Docker, ensure you mount the content directory:")
+            click.echo("")
+            click.echo("    docker run --rm -v $(pwd):/content \\")
+            click.echo("      ghcr.io/gocortexio/spellbook <command>")
+            click.echo("")
+            click.echo("  Run this command from your content instance directory")
+            click.echo("  (the folder containing spellbook.yaml and Packs/).")
+        else:
+            click.echo(f"  Check that the path '{config_path}' is correct.")
+        click.echo("")
+        sys.exit(1)
+    
+    if require_packs:
+        builder = PackBuilder(config_path)
+        if not builder.check_packs_dir_exists():
+            click.echo("")
+            click.echo(f"[ERROR] Packs directory not found: {builder.packs_dir}")
+            click.echo("")
+            click.echo("  The Packs/ directory is required for this command.")
+            click.echo("")
+            click.echo("  When using Docker, ensure you mount the content directory:")
+            click.echo("")
+            click.echo("    docker run --rm -v $(pwd):/content \\")
+            click.echo("      ghcr.io/gocortexio/spellbook <command>")
+            click.echo("")
+            click.echo("  Run this command from your content instance directory.")
+            click.echo("")
+            sys.exit(1)
+    
+    return True
 
 
 BANNER = r"""
@@ -47,9 +112,14 @@ def cli(ctx):
     content packs.
     """
     if ctx.invoked_subcommand is None:
+        versions = get_version_info()
         click.echo(BANNER)
-        click.echo(f"  GoCortex Spellbook v{__version__}")
+        click.echo("  GoCortex Spellbook")
         click.echo("  Cortex Platform Content Pack Builder")
+        click.echo("")
+        click.echo(f"  spellbook-version: {versions['spellbook']}")
+        click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']}")
+        click.echo(f"  python-version: {versions['python']}")
         click.echo("")
         click.echo("  Run 'spellbook.py --help' for available commands.")
         click.echo("")
@@ -108,7 +178,7 @@ def init(instance_name, author, description, no_ci):
         click.echo("Then start developing your packs in Packs/")
         click.echo("")
         click.echo("To build packs (creates zip in artifacts/):")
-        click.echo(f"  docker run --rm -v $(pwd):/content gocortex-spellbook build --all")
+        click.echo("  docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook:latest build --all")
     except FileExistsError as e:
         click.echo(f"[ERROR] {e}")
         sys.exit(1)
@@ -122,7 +192,7 @@ def list_instances():
 
     if not instances:
         click.echo("No instances found.")
-        click.echo("Create one with: docker run --rm -v $(pwd):/content gocortex-spellbook init <name>")
+        click.echo("Create one with: docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook:latest init <name>")
         return
 
     click.echo(f"Found {len(instances)} instance(s):\n")
@@ -226,10 +296,22 @@ def build(pack_name, build_all, validate, lint, config):
     help="Path to configuration file."
 )
 def validate(pack_name, config):
-    """Validate a content pack using demisto-sdk."""
+    """Validate a content pack using demisto-sdk and XSIAM checks."""
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
-    if builder.validate_pack(pack_name):
+    
+    sdk_passed = builder.validate_pack(pack_name)
+    
+    xsiam_validator = XSIAMValidator(builder.packs_dir)
+    xsiam_issues = xsiam_validator.validate_pack(pack_name)
+    xsiam_errors = [i for i in xsiam_issues if i.severity == "error"]
+    
+    if xsiam_issues:
+        click.echo("")
+        click.echo(xsiam_validator.format_issues(xsiam_issues))
+        click.echo("")
+    
+    if sdk_passed and not xsiam_errors:
         click.echo("[PASS] Validation passed")
     else:
         click.echo("[FAIL] Validation failed")
@@ -244,7 +326,7 @@ def validate(pack_name, config):
     help="Path to configuration file."
 )
 def validate_all(config):
-    """Validate all discovered content packs."""
+    """Validate all discovered content packs using demisto-sdk and XSIAM checks."""
     builder = PackBuilder(config)
     packs = builder.discover_packs()
 
@@ -252,10 +334,20 @@ def validate_all(config):
         click.echo("No packs found.")
         return
 
+    xsiam_validator = XSIAMValidator(builder.packs_dir)
     failed = []
+    
     for pack in packs:
         click.echo(f"Validating {pack}...")
-        if not builder.validate_pack(pack):
+        sdk_passed = builder.validate_pack(pack)
+        
+        xsiam_issues = xsiam_validator.validate_pack(pack)
+        xsiam_errors = [i for i in xsiam_issues if i.severity == "error"]
+        
+        if xsiam_issues:
+            click.echo(xsiam_validator.format_issues(xsiam_issues))
+        
+        if not sdk_passed or xsiam_errors:
             failed.append(pack)
 
     if failed:
@@ -480,6 +572,41 @@ def bump_version(pack_name, major, minor, revision, tag, config):
         click.echo(f"       {release_notes_path}")
 
     if tag:
+        try:
+            git_user_name = subprocess.run(
+                ["git", "config", "--get", "user.name"],
+                capture_output=True, text=True
+            )
+            git_user_email = subprocess.run(
+                ["git", "config", "--get", "user.email"],
+                capture_output=True, text=True
+            )
+        except FileNotFoundError:
+            click.echo("[WARN] Git not found, skipping tag creation")
+            return
+        
+        if not git_user_name.stdout.strip() or not git_user_email.stdout.strip():
+            click.echo("")
+            click.echo("[ERROR] Git identity not configured")
+            click.echo("")
+            click.echo("  The --tag flag requires git user.name and user.email to be set.")
+            click.echo("")
+            click.echo("  Configuration           Status")
+            click.echo("  ---------------------   ------")
+            name_status = "[OK] set" if git_user_name.stdout.strip() else "[MISSING]"
+            email_status = "[OK] set" if git_user_email.stdout.strip() else "[MISSING]"
+            click.echo(f"  user.name               {name_status}")
+            click.echo(f"  user.email              {email_status}")
+            click.echo("")
+            click.echo("When using Docker, mount your git config:")
+            click.echo("")
+            click.echo("  docker run --rm \\")
+            click.echo("    -v $(pwd):/content \\")
+            click.echo("    -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\")
+            click.echo(f"    ghcr.io/gocortexio/spellbook bump-version {pack_name} --tag")
+            click.echo("")
+            sys.exit(1)
+        
         tag_name = f"{pack_name}-v{new_version}"
         try:
             metadata_path = pack_path / "pack_metadata.json"
@@ -556,13 +683,7 @@ def rename_content(pack_name, config):
 
 
 @cli.command()
-@click.argument("input_path")
-@click.option(
-    "--zip/--no-zip",
-    "-z/-nz",
-    default=False,
-    help="Compress pack to zip before upload (for pack directories)."
-)
+@click.argument("pack_path")
 @click.option(
     "--xsiam",
     "-x",
@@ -588,11 +709,10 @@ def rename_content(pack_name, config):
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def upload(input_path, zip, xsiam, insecure, skip_validation, config):
+def upload(pack_path, xsiam, insecure, skip_validation, config):
     """Upload a content pack to Cortex Platform.
 
-    INPUT_PATH can be a pack directory (Packs/MyPack) or a zip file
-    (artifacts/MyPack-1.0.0.zip).
+    PACK_PATH must be a pack directory (e.g., Packs/MyPack).
 
     Required environment variables:
       DEMISTO_BASE_URL - Your instance URL
@@ -605,44 +725,82 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
     api_key = os.environ.get("DEMISTO_API_KEY")
     xsiam_auth_id = os.environ.get("XSIAM_AUTH_ID")
 
-    if not base_url:
-        click.echo("[ERROR] DEMISTO_BASE_URL environment variable not set")
-        click.echo("Set it to your Cortex Platform instance URL")
+    env_vars = [
+        ("DEMISTO_BASE_URL", base_url, True),
+        ("DEMISTO_API_KEY", api_key, True),
+        ("XSIAM_AUTH_ID", xsiam_auth_id, xsiam),
+    ]
+    
+    missing = []
+    for name, value, required in env_vars:
+        if required and not value:
+            missing.append(name)
+    
+    if missing:
+        click.echo("")
+        click.echo("[ERROR] Missing required environment variables for upload")
+        click.echo("")
+        click.echo("  Variable           Status")
+        click.echo("  ----------------   ------")
+        for name, value, required in env_vars:
+            if not required:
+                continue
+            status = "[OK] set" if value else "[MISSING]"
+            suffix = " (required with --xsiam)" if name == "XSIAM_AUTH_ID" else ""
+            click.echo(f"  {name:<18} {status}{suffix}")
+        click.echo("")
+        click.echo("Example Docker command:")
+        click.echo("")
+        if xsiam:
+            click.echo('  docker run --rm -v $(pwd):/content \\')
+            click.echo('    -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \\')
+            click.echo('    -e DEMISTO_API_KEY="your-api-key" \\')
+            click.echo('    -e XSIAM_AUTH_ID="your-auth-id" \\')
+            click.echo('    ghcr.io/gocortexio/spellbook upload Packs/MyPack --xsiam')
+        else:
+            click.echo('  docker run --rm -v $(pwd):/content \\')
+            click.echo('    -e DEMISTO_BASE_URL="https://your-instance.demisto.com" \\')
+            click.echo('    -e DEMISTO_API_KEY="your-api-key" \\')
+            click.echo('    ghcr.io/gocortexio/spellbook upload Packs/MyPack')
+        click.echo("")
+        click.echo("Or use an env file:")
+        click.echo("")
+        click.echo("  docker run --rm -v $(pwd):/content --env-file .env \\")
+        click.echo("    ghcr.io/gocortexio/spellbook upload Packs/MyPack")
+        click.echo("")
         sys.exit(1)
 
-    if not api_key:
-        click.echo("[ERROR] DEMISTO_API_KEY environment variable not set")
-        click.echo("Set it to a valid API key with Instance Administrator role")
-        sys.exit(1)
-
-    if xsiam and not xsiam_auth_id:
-        click.echo("[ERROR] XSIAM_AUTH_ID environment variable not set")
-        click.echo("For XSIAM, set the auth ID from your instance")
-        sys.exit(1)
-
-    input_file = Path(input_path)
+    input_file = Path(pack_path)
     if not input_file.exists():
-        click.echo(f"[ERROR] Path not found: {input_path}")
+        click.echo(f"[ERROR] Path not found: {pack_path}")
         sys.exit(1)
 
-    if input_file.is_dir():
-        pack_name = input_file.name
-        builder = PackBuilder(config)
-        mismatched = builder.check_content_naming(pack_name)
-        if mismatched:
-            click.echo("[WARN] Content naming mismatch detected!")
-            click.echo(f"Pack name is '{pack_name}' but content items have different names:")
-            for item in mismatched[:5]:
-                click.echo(f"  - {item}")
-            if len(mismatched) > 5:
-                click.echo(f"  ... and {len(mismatched) - 5} more")
-            click.echo("")
-            click.echo("This may cause upload to fail. To fix, run:")
-            click.echo(f"  gocortex-spellbook rename-content {pack_name}")
-            click.echo(f"  gocortex-spellbook build {pack_name}")
-            click.echo("")
+    if not input_file.is_dir():
+        click.echo(f"[ERROR] Pack path must be a directory: {pack_path}")
+        click.echo("")
+        click.echo("Usage: upload Packs/MyPack --xsiam")
+        click.echo("")
+        click.echo("Note: Upload from pre-built zip files is not supported.")
+        click.echo("Always upload from the pack directory.")
+        sys.exit(1)
 
-    content_root = input_file.parent.parent.resolve() if input_file.is_dir() else Path.cwd()
+    pack_name = input_file.name
+    builder = PackBuilder(config)
+    mismatched = builder.check_content_naming(pack_name)
+    if mismatched:
+        click.echo("[WARN] Content naming mismatch detected!")
+        click.echo(f"Pack name is '{pack_name}' but content items have different names:")
+        for item in mismatched[:5]:
+            click.echo(f"  - {item}")
+        if len(mismatched) > 5:
+            click.echo(f"  ... and {len(mismatched) - 5} more")
+        click.echo("")
+        click.echo("This may cause upload to fail. To fix, run:")
+        click.echo(f"  gocortex-spellbook rename-content {pack_name}")
+        click.echo(f"  gocortex-spellbook build {pack_name}")
+        click.echo("")
+
+    content_root = input_file.parent.parent.resolve()
     git_dir = content_root / ".git"
     git_initialized = False
     
@@ -672,10 +830,7 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
         except subprocess.CalledProcessError as e:
             click.echo(f"[WARN] Could not initialise git repository: {e}")
 
-    cmd = ["demisto-sdk", "upload", "-i", str(input_file)]
-
-    if zip:
-        cmd.append("-z")
+    cmd = ["demisto-sdk", "upload", "-i", str(input_file), "-z"]
 
     if xsiam:
         cmd.append("--xsiam")
@@ -686,7 +841,7 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
     if skip_validation:
         cmd.append("--skip-validation")
 
-    click.echo(f"Uploading {input_path}...")
+    click.echo(f"Uploading {pack_path}...")
     click.echo(f"Target: {base_url}")
 
     try:
@@ -711,6 +866,148 @@ def upload(input_path, zip, xsiam, insecure, skip_validation, config):
                 shutil.rmtree(git_dir)
             except Exception:
                 pass
+
+
+@cli.command(name="check-init")
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def check_init(config):
+    """Check the initialised instance environment.
+    
+    Validates that the current content instance is properly configured
+    and ready for use. Run this command to troubleshoot issues before
+    running other commands.
+    """
+    versions = get_version_info()
+    click.echo("")
+    click.echo("Spellbook Check-Init")
+    click.echo("====================")
+    click.echo("")
+    
+    click.echo("Version Information")
+    click.echo("-------------------")
+    click.echo(f"  spellbook-version: {versions['spellbook']}")
+    click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']}")
+    click.echo(f"  python-version: {versions['python']}")
+    click.echo("")
+    
+    all_ok = True
+    has_warnings = False
+    
+    click.echo("Environment Checks")
+    click.echo("------------------")
+    
+    config_file = Path(config)
+    if config_file.exists():
+        click.echo(f"  [OK] Configuration file: {config}")
+    else:
+        click.echo(f"  [FAIL] Configuration file: {config} (not found)")
+        all_ok = False
+    
+    if config_file.exists():
+        builder = PackBuilder(config)
+        if builder.check_packs_dir_exists():
+            packs = builder.discover_packs()
+            click.echo(f"  [OK] Packs directory: {builder.packs_dir} ({len(packs)} pack(s))")
+        else:
+            click.echo(f"  [FAIL] Packs directory: {builder.packs_dir} (not found)")
+            all_ok = False
+        
+        if builder.artifacts_dir.exists():
+            click.echo(f"  [OK] Artifacts directory: {builder.artifacts_dir}")
+        else:
+            click.echo(f"  [INFO] Artifacts directory: {builder.artifacts_dir} (will be created)")
+    
+    try:
+        git_check = subprocess.run(["git", "--version"], capture_output=True, text=True)
+        if git_check.returncode == 0:
+            click.echo(f"  [OK] Git: {git_check.stdout.strip()}")
+        else:
+            click.echo("  [FAIL] Git: not found")
+            all_ok = False
+    except FileNotFoundError:
+        click.echo("  [FAIL] Git: not found")
+        all_ok = False
+        git_check = None
+    
+    if git_check and git_check.returncode == 0:
+        try:
+            git_user_name = subprocess.run(
+                ["git", "config", "--get", "user.name"],
+                capture_output=True, text=True
+            )
+            git_user_email = subprocess.run(
+                ["git", "config", "--get", "user.email"],
+                capture_output=True, text=True
+            )
+            
+            if git_user_name.stdout.strip():
+                click.echo(f"  [OK] Git user.name: {git_user_name.stdout.strip()}")
+            else:
+                click.echo("  [WARN] Git user.name: not set (required for --tag)")
+                has_warnings = True
+                
+            if git_user_email.stdout.strip():
+                click.echo(f"  [OK] Git user.email: {git_user_email.stdout.strip()}")
+            else:
+                click.echo("  [WARN] Git user.email: not set (required for --tag)")
+                has_warnings = True
+        except FileNotFoundError:
+            pass
+    
+    try:
+        sdk_check = subprocess.run(
+            ["demisto-sdk", "--version"],
+            capture_output=True, text=True
+        )
+        if sdk_check.returncode == 0:
+            click.echo(f"  [OK] demisto-sdk: available")
+        else:
+            click.echo("  [FAIL] demisto-sdk: not found")
+            all_ok = False
+    except FileNotFoundError:
+        click.echo("  [FAIL] demisto-sdk: not found")
+        all_ok = False
+    
+    click.echo("")
+    click.echo("Upload Environment Variables")
+    click.echo("----------------------------")
+    
+    base_url = os.environ.get("DEMISTO_BASE_URL")
+    api_key = os.environ.get("DEMISTO_API_KEY")
+    xsiam_auth_id = os.environ.get("XSIAM_AUTH_ID")
+    
+    if base_url:
+        click.echo(f"  [OK] DEMISTO_BASE_URL: {base_url[:30]}...")
+    else:
+        click.echo("  [INFO] DEMISTO_BASE_URL: not set (required for upload)")
+    
+    if api_key:
+        click.echo("  [OK] DEMISTO_API_KEY: set (hidden)")
+    else:
+        click.echo("  [INFO] DEMISTO_API_KEY: not set (required for upload)")
+    
+    if xsiam_auth_id:
+        click.echo("  [OK] XSIAM_AUTH_ID: set (hidden)")
+    else:
+        click.echo("  [INFO] XSIAM_AUTH_ID: not set (required for XSIAM upload)")
+    
+    upload_ready = base_url and api_key
+    
+    click.echo("")
+    if not all_ok:
+        click.echo("[FAIL] Some checks failed - see above for details")
+    elif has_warnings:
+        click.echo("[WARN] Ready for builds, but some items need attention")
+    elif not upload_ready:
+        click.echo("[INFO] Ready for local builds. Upload requires environment variables.")
+    else:
+        click.echo("[OK] All checks passed")
+    click.echo("")
 
 
 if __name__ == "__main__":

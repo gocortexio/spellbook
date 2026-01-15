@@ -24,12 +24,18 @@ class PackTemplate:
         "IncidentFields",
         "Layouts",
         "Classifiers",
+        "CorrelationRules",
+        "ParsingRules",
+        "ModelingRules",
+        "XSIAMDashboards",
+        "ReleaseNotes",
     ]
 
     XSIAM_DIRECTORIES = [
         "CorrelationRules",
         "ParsingRules",
         "ModelingRules",
+        "XSIAMDashboards",
     ]
 
     def __init__(self, config_path: str = "spellbook.yaml"):
@@ -225,31 +231,91 @@ For support, please refer to the pack metadata for contact information.
         dataset = f"{vendor}_raw"
         global_id = str(uuid.uuid4())
 
-        rule_yml = f"""global_rule_id: {global_id}
-name: {rule_name}
-alert_name: {pack_name} - Brute Force Attack Detected
-description: Detects multiple failed authentication attempts from a single source within a short time window indicating a potential brute force attack.
-alert_description: Multiple failed login attempts detected from $xdm.source.ipv4 targeting $xdm.target.user.username which may indicate a brute force attack.
+        rule_yml = f"""action: ALERTS
 alert_category: CREDENTIAL_ACCESS
+alert_description: Multiple failed login attempts detected from $xdm.source.ipv4 targeting $xdm.target.user.username which may indicate a brute force attack.
+alert_domain: DOMAIN_SECURITY
 alert_fields:
   actor_effective_username: xdm.source.user.username
   agent_hostname: xdm.source.host.hostname
+alert_name: {pack_name} - Brute Force Attack Detected
+alert_type: null
 dataset: alerts
+description: Detects multiple failed authentication attempts from a single source within a short time window indicating a potential brute force attack.
 drilldown_query_timeframe: ALERT
 execution_mode: REAL_TIME
+fromversion: 8.4.0
+global_rule_id: {global_id}
+investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
+is_enabled: true
 mapping_strategy: CUSTOM
+mitre_defs:
+  TA0006 - Credential Access:
+  - T1110 - Brute Force
+name: {rule_name}
 severity: SEV_030_MEDIUM
-suppression_enabled: true
 suppression_duration: 1 hours
-suppression_fields: xdm.source.ipv4|xdm.target.user.username
+suppression_enabled: true
+suppression_fields:
+  - xdm.source.ipv4
+  - xdm.target.user.username
 xql_query: |
   datamodel dataset = {dataset}
   | filter xdm.event.type = "AUTHENTICATION" and xdm.event.outcome = "FAILED"
   | fields xdm.event.type, xdm.event.outcome, xdm.source.ipv4, xdm.source.host.hostname, xdm.target.user.username, xdm.source.user.username
+"""
+
+        rule_filename = rule_name.replace(" ", "_").replace("-", "_")
+        rule_path = rules_dir / f"{rule_filename}.yml"
+        with open(rule_path, "w", encoding="utf-8") as f:
+            f.write(rule_yml)
+
+        self._create_scheduled_correlation_rule(rules_dir, pack_name, dataset)
+
+    def _create_scheduled_correlation_rule(self, rules_dir: Path, pack_name: str, dataset: str) -> None:
+        """Create sample scheduled correlation rule for Cortex Platform.
+        
+        Demonstrates how to configure a CRON-based scheduled correlation rule
+        instead of real-time execution. Requires crontab, execution_mode, and
+        search_window fields.
+        """
+        rule_name = f"{pack_name} - Multiple Failed Login Attempts-Scheduled"
+        global_id = str(uuid.uuid4())
+
+        rule_yml = f"""action: ALERTS
+alert_category: CREDENTIAL_ACCESS
+alert_description: Multiple failed login attempts detected from $xdm.source.ipv4 targeting $xdm.target.user.username which may indicate a brute force attack.
+alert_domain: DOMAIN_SECURITY
+alert_fields:
+  actor_effective_username: xdm.source.user.username
+  agent_hostname: xdm.source.host.hostname
+alert_name: {pack_name} - Brute Force Attack Detected-Scheduled
+alert_type: null
+crontab: '*/10 * * * *'
+dataset: alerts
+description: Detects multiple failed authentication attempts from a single source using scheduled execution. Runs every 10 minutes with a 15 minute search window.
+drilldown_query_timeframe: ALERT
+execution_mode: SCHEDULED
+fromversion: 8.4.0
+global_rule_id: {global_id}
+investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
+is_enabled: true
+mapping_strategy: CUSTOM
 mitre_defs:
   TA0006 - Credential Access:
   - T1110 - Brute Force
-fromversion: 8.4.0
+name: {rule_name}
+search_window: 15 minutes
+severity: SEV_030_MEDIUM
+suppression_duration: 1 hours
+suppression_enabled: true
+suppression_fields:
+  - xdm.source.ipv4
+  - xdm.target.user.username
+xql_query: |
+  datamodel dataset = {dataset}
+  | filter xdm.event.type = "AUTHENTICATION" and xdm.event.outcome = "FAILED"
+  | fields xdm.event.type, xdm.event.outcome, xdm.source.ipv4, xdm.source.host.hostname, xdm.target.user.username, xdm.source.user.username
 """
 
         rule_filename = rule_name.replace(" ", "_").replace("-", "_")

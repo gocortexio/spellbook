@@ -77,6 +77,14 @@ class PackBuilder:
             with open(path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
+    
+    def check_config_exists(self) -> bool:
+        """Check if the configuration file exists."""
+        return self.config_path.exists()
+    
+    def check_packs_dir_exists(self) -> bool:
+        """Check if the Packs directory exists."""
+        return self.packs_dir.exists()
 
     def discover_packs(self) -> List[str]:
         """
@@ -377,6 +385,9 @@ class PackBuilder:
         """
         Package a pack into a zip file.
 
+        Creates a zip archive containing all files and directories in the pack,
+        matching the format expected by demisto-sdk upload.
+
         Args:
             pack_name: Name of the pack to package.
             output_dir: Directory for output zip file.
@@ -405,18 +416,26 @@ class PackBuilder:
 
         metadata = self.read_pack_metadata(pack_name)
         version = metadata.get("currentVersion", "1.0.0")
-        zip_name = f"{pack_name}-{version}.zip"
+
+        zip_name = f"{pack_name}-v{version}.zip"
         zip_path = output_dir / zip_name
 
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, dirs, files in os.walk(pack_path):
-                for file in files:
-                    file_path = Path(root) / file
-                    arcname = file_path.relative_to(pack_path.parent)
-                    zf.write(file_path, arcname)
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(pack_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, pack_path)
+                        zipf.write(file_path, arcname)
 
-        print(f"Created package: {zip_path}")
-        return zip_path
+            print(f"Created package: {zip_path}")
+            return zip_path
+
+        except Exception as e:
+            print(f"Failed to create package for {pack_name}: {e}")
+            if zip_path.exists():
+                zip_path.unlink()
+            return None
 
     def build_pack(
         self,

@@ -31,7 +31,10 @@ This image is used by the CI/CD workflows and is automatically built with each r
 Create a content instance with CI enabled (this is the default):
 
 ```bash
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation"
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook init my-content --author "Your Organisation"
 ```
 
 Initialise Git and push to GitHub:
@@ -83,7 +86,10 @@ For subsequent releases, increment the version:
 
 ```bash
 # Update the pack version first
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook set-version SamplePack 1.1.0
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook set-version SamplePack 1.1.0
 
 # Commit the version change
 git add Packs/SamplePack/pack_metadata.json
@@ -103,19 +109,30 @@ Spellbook provides the bump-version command to automatically increment pack vers
 
 ```bash
 # Bump revision (1.0.0 -> 1.0.1) - default behaviour
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack
 
 # Bump revision explicitly (1.0.0 -> 1.0.1)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --revision
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack --revision
 
 # Bump minor version (1.0.0 -> 1.1.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --minor
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack --minor
 
 # Bump major version (1.0.0 -> 2.0.0)
-docker run --rm -v $(pwd):/content ghcr.io/gocortexio/spellbook bump-version SamplePack --major
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack --major
 
 # Bump version and create a Git tag for CI/CD triggering
-# Note: Mount your git config so the container can create commits and tags
 docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
@@ -249,6 +266,7 @@ Upload a pack directory to XSOAR:
 ```bash
 docker run --rm \
   -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL="https://your-instance.demisto.com" \
   -e DEMISTO_API_KEY="your-api-key" \
   ghcr.io/gocortexio/spellbook upload Packs/SamplePack
@@ -259,21 +277,23 @@ Upload to XSIAM (requires auth ID and --xsiam flag):
 ```bash
 docker run --rm \
   -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
   -e DEMISTO_API_KEY="your-api-key" \
   -e XSIAM_AUTH_ID="your-auth-id" \
   ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
 ```
 
-Upload a built zip file:
+Upload with insecure connection (skip certificate validation):
 
 ```bash
 docker run --rm \
   -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
   -e DEMISTO_API_KEY="your-api-key" \
   -e XSIAM_AUTH_ID="your-auth-id" \
-  ghcr.io/gocortexio/spellbook upload artifacts/SamplePack-1.0.0.zip --zip --xsiam
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam --insecure
 ```
 
 ### Using an Environment File
@@ -292,6 +312,7 @@ Then use --env-file to load the credentials:
 ```bash
 docker run --rm \
   -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   --env-file .env \
   ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
 ```
@@ -300,7 +321,6 @@ The .env file is included in .gitignore by default to prevent accidental commits
 
 ### Upload Options
 
-- --zip - Treat input as a zip file rather than a directory
 - --xsiam - Upload to XSIAM (requires XSIAM_AUTH_ID)
 - --insecure - Skip SSL certificate verification
 - --skip-validation - Skip pack validation before upload
