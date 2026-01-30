@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
 """
 Instance Module
 
@@ -175,10 +177,6 @@ jobs:
             -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \\
             ghcr.io/gocortexio/spellbook:latest \\
             validate-all
-
-      - name: Check validation results
-        run: |
-          echo "Validation complete"
 '''
         validate_path = workflows_dir / "validate.yml"
         with open(validate_path, "w", encoding="utf-8") as f:
@@ -321,10 +319,6 @@ create_release:
             "validation": {
                 "enabled": True,
                 "allow_warnings": True
-            },
-            "linting": {
-                "enabled": True,
-                "run_tests": True
             },
             "packaging": {
                 "create_zip": True

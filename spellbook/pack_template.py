@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
 """
 Pack Template Module
 
@@ -28,6 +30,10 @@ class PackTemplate:
         "ParsingRules",
         "ModelingRules",
         "XSIAMDashboards",
+        "XSIAMReports",
+        "Triggers",
+        "Jobs",
+        "XDRCTemplates",
         "ReleaseNotes",
     ]
 
@@ -36,6 +42,10 @@ class PackTemplate:
         "ParsingRules",
         "ModelingRules",
         "XSIAMDashboards",
+        "XSIAMReports",
+        "Triggers",
+        "Jobs",
+        "XDRCTemplates",
     ]
 
     def __init__(self, config_path: str = "spellbook.yaml"):
@@ -155,6 +165,26 @@ This pack contains content for use with Cortex Platform.
 
 ## Content Items
 
+### Parsing Rules
+
+Rules for parsing raw log data into structured fields.
+
+### Modelling Rules
+
+Rules for mapping parsed data to the XDM (Cross Data Model) schema.
+
+### Correlation Rules
+
+Detection rules that identify security events and generate alerts.
+
+### XSIAM Dashboards
+
+Visual dashboards for monitoring and analysis.
+
+### XSIAM Reports
+
+Report templates for scheduled reporting.
+
 ### Integrations
 
 (List integrations here)
@@ -166,6 +196,14 @@ This pack contains content for use with Cortex Platform.
 ### Playbooks
 
 (List playbooks here)
+
+### Triggers
+
+Automation triggers for event-driven workflows.
+
+### Jobs
+
+Scheduled jobs for recurring tasks.
 
 ## Installation
 
@@ -445,22 +483,138 @@ alter
 ##### {pack_name} - Multiple Failed Login Attempts
 
 - Initial release of brute force detection correlation rule.
+
+#### XSIAM Dashboards
+
+##### {pack_name} Example
+
+- Initial release of example dashboard.
+
+#### XSIAM Reports
+
+##### {pack_name} Example
+
+- Initial release of example report.
 """
 
         with open(notes_dir / "1_0_0.md", "w", encoding="utf-8") as f:
             f.write(release_content)
 
+    def _create_xsiam_dashboard(self, pack_path: Path, pack_name: str) -> None:
+        """Create sample XSIAM dashboard for Cortex Platform.
+        
+        Creates an example dashboard JSON file that can be uploaded to XSIAM.
+        The dashboard includes a header and sample widgets.
+        Structure matches the format exported from XSIAM Dashboard Manager.
+        """
+        dashboards_dir = pack_path / "XSIAMDashboards"
+        dashboards_dir.mkdir(exist_ok=True)
+        
+        dashboard_id = f"{pack_name.lower()}_example_dashboard"
+        dashboard_name = f"{pack_name} Example"
+        
+        dashboard_data = {
+            "dashboards_data": [
+                {
+                    "name": dashboard_name,
+                    "description": f"An example dashboard for {pack_name}",
+                    "status": "ENABLED",
+                    "layout": [
+                        {
+                            "id": "row-header",
+                            "data": [
+                                {
+                                    "key": "header",
+                                    "data": {
+                                        "name": dashboard_name,
+                                        "type": "",
+                                        "width": 100,
+                                        "height": 250,
+                                        "description": f"An example dashboard for {pack_name}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "global_id": dashboard_id,
+                    "metadata": {"params": []}
+                }
+            ],
+            "widgets_data": [],
+            "id": dashboard_id,
+            "name": dashboard_name
+        }
+        
+        dashboard_path = dashboards_dir / f"{pack_name}ExampleDashboard.json"
+        with open(dashboard_path, "w", encoding="utf-8") as f:
+            json.dump(dashboard_data, f, indent=2)
+            f.write("\n")
+    
+    def _create_xsiam_report(self, pack_path: Path, pack_name: str) -> None:
+        """Create sample XSIAM report for Cortex Platform.
+        
+        Creates an example report JSON file that can be uploaded to XSIAM.
+        The report includes a header and sample layout.
+        Structure matches the format exported from XSIAM Report Templates.
+        """
+        reports_dir = pack_path / "XSIAMReports"
+        reports_dir.mkdir(exist_ok=True)
+        
+        report_id = f"{pack_name.lower()}_example_report"
+        report_name = f"{pack_name} Example"
+        
+        report_data = {
+            "templates_data": [
+                {
+                    "report_name": report_name,
+                    "report_description": f"An example report for {pack_name}",
+                    "layout": [
+                        {
+                            "id": "row-header",
+                            "data": [
+                                {
+                                    "key": "header",
+                                    "data": {
+                                        "name": report_name,
+                                        "type": "",
+                                        "width": 100,
+                                        "height": 250,
+                                        "description": f"An example report for {pack_name}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    "default_template_id": None,
+                    "time_frame": {"relativeTime": 86400000},
+                    "global_id": report_id,
+                    "time_offset": 0,
+                    "metadata": "{\"params\": []}"
+                }
+            ],
+            "widgets_data": [],
+            "id": report_id,
+            "name": report_name
+        }
+        
+        report_path = reports_dir / f"{pack_name}ExampleReport.json"
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report_data, f, indent=2)
+            f.write("\n")
+
     def create_xsiam_content(self, pack_path: Path, pack_name: str) -> None:
         """Create Cortex Platform content structure.
         
         Creates complete XSIAM content including ParsingRules, ModelingRules,
-        CorrelationRules, and ReleaseNotes. All templates follow the official
-        demisto-sdk schemas and are based on working examples from the
-        demisto/content repository.
+        CorrelationRules, XSIAMDashboards, XSIAMReports, and ReleaseNotes.
+        All templates follow the official demisto-sdk schemas and are based
+        on working examples from the demisto/content repository.
         """
         self._create_parsing_rule(pack_path, pack_name)
         self._create_modeling_rule(pack_path, pack_name)
         self._create_correlation_rule(pack_path, pack_name)
+        self._create_xsiam_dashboard(pack_path, pack_name)
+        self._create_xsiam_report(pack_path, pack_name)
         self._create_release_notes(pack_path, pack_name)
 
     def list_templates(self) -> List[str]:

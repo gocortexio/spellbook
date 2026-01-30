@@ -1,15 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
+#
 # GoCortex Spellbook Docker Image
 # Provides a ready-to-use environment for building Cortex Platform content packs
 
 FROM python:3.11-alpine
 
-ARG SPELLBOOK_VERSION=1.18.10
+ARG SPELLBOOK_VERSION=1.19.0
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
 LABEL version="${SPELLBOOK_VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
-LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -21,15 +24,12 @@ RUN apk add --no-cache \
 # Set up application directory
 WORKDIR /app
 
-# Install demisto-sdk from latest GitHub release and additional dependencies
-RUN LATEST_VERSION=$(curl -s https://api.github.com/repos/demisto/demisto-sdk/releases/latest | jq -r '.tag_name') && \
-    pip install --no-cache-dir "demisto-sdk==${LATEST_VERSION#v}" gitpython pyyaml || \
-    pip install --no-cache-dir demisto-sdk gitpython pyyaml
+# Install demisto-sdk (pinned version) and additional dependencies
+RUN pip install --no-cache-dir "demisto-sdk==1.38.18" "gitpython>=3.1.46" "pyyaml>=6.0.3"
 
 # Copy project files
 COPY spellbook/ ./spellbook/
 COPY spellbook.py ./
-COPY spellbook.yaml ./
 
 # Create non-root user for security
 RUN addgroup -g 1000 spellbook && \

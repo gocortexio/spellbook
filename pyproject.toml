@@ -6,12 +6,16 @@ build-backend = "hatchling.build"
 name = "gocortex-spellbook"
 dynamic = ["version"]
 description = "A Python toolset for building, validating, and packaging Cortex Platform content packs."
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
-    "demisto-sdk>=1.38.15",
-    "gitpython>=3.1.45",
+    "demisto-sdk==1.38.18",
+    "gitpython>=3.1.46",
     "pyyaml>=6.0.3",
 ]
 
 [tool.hatch.version]
 path = "spellbook/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["spellbook"]

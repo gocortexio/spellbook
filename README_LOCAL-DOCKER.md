@@ -146,21 +146,6 @@ docker run --rm \
 
 ---
 
-## Lint (Optional)
-
-Linting runs additional code quality checks using demisto-sdk pre-commit hooks:
-
-```bash
-docker run --rm \
-  -v $(pwd):/content \
-  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
-  ghcr.io/gocortexio/spellbook lint MyNewPack
-```
-
-This step is optional but recommended before uploading to production systems.
-
----
-
 ## Build
 
 Building creates a distributable zip file in the artefacts directory:
@@ -256,6 +241,12 @@ docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   ghcr.io/gocortexio/spellbook set-version MyNewPack 2.0.0
+
+# Set version and create Git tag (stages all pack files)
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook set-version MyNewPack 2.0.0 --tag
 ```
 
 Bump version automatically:
@@ -296,7 +287,7 @@ docker run --rm \
 
 ## Git Configuration for Tagging
 
-When using the `--tag` flag with `bump-version`, the container needs access to your Git identity to create commits and tags. Mount your local git config file:
+When using the `--tag` flag with `bump-version` or `set-version`, the container needs access to your Git identity to create commits and tags. The `--tag` flag stages all files in the pack directory, commits them, and creates a Git tag. Mount your local git config file:
 
 ```bash
 docker run --rm \
@@ -343,7 +334,6 @@ Replace `<command>` with any of the following:
 | Rename content | rename-content PackName |
 | Validate pack | validate PackName |
 | Validate all | validate-all |
-| Lint pack | lint PackName |
 | Build pack | build PackName |
 | Build all | build --all |
 | Show version | version PackName |

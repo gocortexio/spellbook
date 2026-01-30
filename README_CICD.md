@@ -85,20 +85,14 @@ This triggers the build workflow which:
 For subsequent releases, increment the version:
 
 ```bash
-# Update the pack version first
+# Set version, stage all pack files, commit and tag in one command
 docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
-  ghcr.io/gocortexio/spellbook set-version SamplePack 1.1.0
+  ghcr.io/gocortexio/spellbook set-version SamplePack 1.1.0 --tag
 
-# Commit the version change
-git add Packs/SamplePack/pack_metadata.json
-git commit -s -m "Bump SamplePack to 1.1.0"
-git push
-
-# Create and push the tag
-git tag SamplePack-v1.1.0
-git push origin SamplePack-v1.1.0
+# Push the commit and tag
+git push && git push origin SamplePack-v1.1.0
 ```
 
 ---
@@ -147,38 +141,7 @@ The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers th
 
 The default validate.yml workflow runs basic validation. You can enhance it with additional checks.
 
-Add linting to pull request validation by editing .github/workflows/validate.yml:
-
-```yaml
-jobs:
-  validate:
-    name: Validate Packs
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Validate packs
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/Packs:/content/Packs \
-            -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-            ghcr.io/gocortexio/spellbook:latest \
-            validate-all
-
-      - name: Lint packs
-        run: |
-          for pack in Packs/*/; do
-            pack_name=$(basename "$pack")
-            docker run --rm \
-              -v ${{ github.workspace }}/Packs:/content/Packs \
-              -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-              ghcr.io/gocortexio/spellbook:latest \
-              lint "$pack_name"
-          done
-```
-
-Add a check for naming consistency:
+Add a check for naming consistency by editing .github/workflows/validate.yml:
 
 ```yaml
       - name: Check content naming

@@ -148,18 +148,6 @@ python spellbook.py validate-all -c my-content/spellbook.yaml
 
 ---
 
-## Lint (Optional)
-
-Linting runs additional code quality checks using demisto-sdk pre-commit hooks:
-
-```bash
-python spellbook.py lint MyNewPack -c my-content/spellbook.yaml
-```
-
-This step is optional but recommended before uploading to production systems.
-
----
-
 ## Build
 
 Building creates a distributable zip file in the artefacts directory:
@@ -226,6 +214,9 @@ Set a specific version:
 
 ```bash
 python spellbook.py set-version MyNewPack 2.0.0 -c my-content/spellbook.yaml
+
+# Set version and create Git tag (stages all pack files)
+python spellbook.py set-version MyNewPack 2.0.0 --tag -c my-content/spellbook.yaml
 ```
 
 Bump version automatically:
@@ -274,7 +265,6 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Rename content | python spellbook.py rename-content PackName -c my-content/spellbook.yaml |
 | Validate pack | python spellbook.py validate PackName -c my-content/spellbook.yaml |
 | Validate all | python spellbook.py validate-all -c my-content/spellbook.yaml |
-| Lint pack | python spellbook.py lint PackName -c my-content/spellbook.yaml |
 | Build pack | python spellbook.py build PackName -c my-content/spellbook.yaml |
 | Build all | python spellbook.py build --all -c my-content/spellbook.yaml |
 | Show version | python spellbook.py version PackName -c my-content/spellbook.yaml |

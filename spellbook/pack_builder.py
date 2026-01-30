@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
 """
 Pack Builder Module
 
@@ -15,6 +17,9 @@ from typing import Dict, List, Optional
 import yaml
 
 from .version_manager import VersionManager
+
+
+EXCLUDED_PACKS = ["SamplePack"]
 
 
 class PackBuilder:
@@ -41,6 +46,7 @@ class PackBuilder:
         "CorrelationRules",
         "XSIAMDashboards",
         "XSIAMReports",
+        "XDRCTemplates",
         "Triggers",
         "Lists",
         "GenericDefinitions",
@@ -98,9 +104,10 @@ class PackBuilder:
 
         packs = []
         exclude = self.config.get("exclude_packs", [])
+        exclude_set = set(exclude + EXCLUDED_PACKS)
 
         for item in self.packs_dir.iterdir():
-            if item.is_dir() and item.name not in exclude:
+            if item.is_dir() and item.name not in exclude_set:
                 metadata_file = item / "pack_metadata.json"
                 if metadata_file.exists():
                     packs.append(item.name)
@@ -280,6 +287,7 @@ class PackBuilder:
             
             if result.returncode == 0:
                 print(f"Validation passed for {pack_name}")
+                self._check_gitkeep_files(pack_name)
                 return True
             else:
                 print(f"Validation failed for {pack_name}")
@@ -294,88 +302,26 @@ class PackBuilder:
                 except Exception:
                     pass
 
-    def lint_pack(self, pack_name: str) -> bool:
+    def _check_gitkeep_files(self, pack_name: str) -> None:
         """
-        Lint a pack using demisto-sdk pre-commit.
+        Check for .gitkeep files in the pack and warn if found.
 
-        The standalone lint command was removed from demisto-sdk
-        in 2024. This method uses the pre-commit hook instead.
+        .gitkeep files are used during development to preserve empty
+        directories in Git but must be removed before marketplace
+        submission.
 
         Args:
-            pack_name: Name of the pack to lint.
-
-        Returns:
-            True if linting passed, False otherwise.
+            pack_name: Name of the pack to check.
         """
-        lint_config = self.config.get("linting", {})
-        if not lint_config.get("enabled", True):
-            print(f"Linting disabled, skipping {pack_name}")
-            return True
-
         pack_path = self.get_pack_path(pack_name)
-        content_root = pack_path.parent.parent.resolve()
+        gitkeep_files = list(pack_path.rglob(".gitkeep"))
         
-        git_dir = content_root / ".git"
-        git_initialized = False
-        if not git_dir.exists():
-            print("Setting up temporary git repository for linting...")
-            try:
-                subprocess.run(
-                    ["git", "init"],
-                    cwd=str(content_root),
-                    capture_output=True,
-                    check=True
-                )
-                git_initialized = True
-                subprocess.run(
-                    ["git", "add", "-A"],
-                    cwd=str(content_root),
-                    capture_output=True,
-                    check=True
-                )
-                subprocess.run(
-                    ["git", "-c", "user.name=Spellbook", "-c", "user.email=spellbook@localhost",
-                     "commit", "-m", "Temporary commit for linting", "--allow-empty"],
-                    cwd=str(content_root),
-                    capture_output=True,
-                    check=True
-                )
-            except subprocess.CalledProcessError as e:
-                print(f"Warning: Could not initialise git repository: {e}")
-
-        cmd = ["demisto-sdk", "pre-commit", "-i", str(pack_path)]
-
-        env = os.environ.copy()
-        env["CONTENT_PATH"] = str(content_root)
-        env["DEMISTO_SDK_CONTENT_PATH"] = str(content_root)
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                env=env,
-                cwd=str(content_root)
-            )
-            print(result.stdout, end="")
-            if result.stderr:
-                print(result.stderr, end="")
-            
-            if result.returncode == 0:
-                print(f"Linting passed for {pack_name}")
-                return True
-            else:
-                print(f"Linting issues in {pack_name}")
-                return False
-        except FileNotFoundError:
-            print("demisto-sdk not found, skipping linting")
-            return True
-        finally:
-            if git_initialized:
-                try:
-                    shutil.rmtree(git_dir)
-                except Exception:
-                    pass
+        if gitkeep_files:
+            print("")
+            print("[WARN] .gitkeep files found in pack (remove empty folders before public marketplace submission):")
+            for f in gitkeep_files:
+                relative = f.relative_to(pack_path)
+                print(f"[WARN]   {relative}")
 
     def package_pack(
         self,
@@ -440,16 +386,14 @@ class PackBuilder:
     def build_pack(
         self,
         pack_name: str,
-        validate: bool = True,
-        lint: bool = False
+        validate: bool = True
     ) -> Optional[Path]:
         """
-        Build a complete pack (validate, lint, and package).
+        Build a complete pack (validate and package).
 
         Args:
             pack_name: Name of the pack to build.
             validate: Whether to run validation.
-            lint: Whether to run linting.
 
         Returns:
             Path to created zip file, or None if build failed.
@@ -467,24 +411,17 @@ class PackBuilder:
                 print(f"Build failed for {pack_name}: validation errors")
                 return None
 
-        if lint:
-            if not self.lint_pack(pack_name):
-                print(f"Build failed for {pack_name}: linting errors")
-                return None
-
         return self.package_pack(pack_name)
 
     def build_all_packs(
         self,
-        validate: bool = True,
-        lint: bool = False
+        validate: bool = True
     ) -> Dict[str, Optional[Path]]:
         """
         Build all discovered packs.
 
         Args:
             validate: Whether to run validation.
-            lint: Whether to run linting.
 
         Returns:
             Dictionary mapping pack names to their zip file paths.
@@ -495,8 +432,7 @@ class PackBuilder:
         for pack_name in packs:
             results[pack_name] = self.build_pack(
                 pack_name,
-                validate=validate,
-                lint=lint
+                validate=validate
             )
 
         return results

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
 """
 XSIAM Validator Module
 
@@ -69,6 +71,22 @@ class XSIAMValidator:
             message="Parentheses in correlation rule name may cause XSIAM issues - use hyphens instead",
             severity="warning"
         ),
+        
+    ]
+    
+    # Content types to check for filename issues
+    FILENAME_CHECK_DIRECTORIES = [
+        "XSIAMDashboards",
+        "XSIAMReports",
+        "CorrelationRules",
+        "ParsingRules",
+        "ModelingRules",
+        "Playbooks",
+        "Scripts",
+        "Integrations",
+        "Triggers",
+        "Jobs",
+        "XDRCTemplates",
     ]
 
     def __init__(self, packs_dir: Path):
@@ -99,6 +117,63 @@ class XSIAMValidator:
         for rule in self.RULES:
             rule_issues = self._check_rule(pack_path, rule)
             issues.extend(rule_issues)
+        
+        # Check filenames for problematic characters
+        filename_issues = self._check_filenames(pack_path)
+        issues.extend(filename_issues)
+        
+        return issues
+    
+    def _check_filenames(self, pack_path: Path) -> List[ValidationIssue]:
+        """
+        Check filenames for problematic characters.
+        
+        Detects spaces and other problematic characters in content filenames
+        that may cause issues with XSIAM uploads.
+        
+        Args:
+            pack_path: Path to the pack directory.
+            
+        Returns:
+            List of validation issues for problematic filenames.
+        """
+        issues = []
+        
+        for content_type in self.FILENAME_CHECK_DIRECTORIES:
+            content_dir = pack_path / content_type
+            if not content_dir.exists():
+                continue
+            
+            for file_path in content_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                
+                # Skip .gitkeep files
+                if file_path.name == ".gitkeep":
+                    continue
+                
+                filename = file_path.name
+                relative_path = str(file_path.relative_to(pack_path.parent))
+                
+                # Check for spaces in filename
+                if " " in filename:
+                    issues.append(ValidationIssue(
+                        rule_name="filename_contains_space",
+                        severity="error",
+                        file_path=relative_path,
+                        message="Filename contains spaces - rename file using underscores or hyphens only"
+                    ))
+                
+                # Check for mixed separators (both underscore and hyphen)
+                has_underscore = "_" in filename.replace(".yml", "").replace(".json", "").replace(".xif", "").replace(".md", "")
+                has_hyphen = "-" in filename.replace(".yml", "").replace(".json", "").replace(".xif", "").replace(".md", "")
+                if has_underscore and has_hyphen:
+                    issues.append(ValidationIssue(
+                        rule_name="filename_mixed_separators",
+                        severity="warning",
+                        file_path=relative_path,
+                        message="Filename uses mixed separators (underscores and hyphens) - consider using consistent separators"
+                    ))
         
         return issues
 

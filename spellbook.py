@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
 """
 GoCortex Spellbook CLI
 
@@ -19,6 +21,9 @@ from spellbook.pack_template import PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
 from spellbook.xsiam_validator import XSIAMValidator
+
+
+PINNED_SDK_VERSION = "1.38.18"
 
 
 def get_version_info():
@@ -85,20 +90,125 @@ def check_environment(config_path: str, require_packs: bool = True) -> bool:
     return True
 
 
+def validate_version_format(version: str) -> bool:
+    """Check if version matches X.Y.Z format."""
+    import re
+    pattern = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+    return pattern.match(version) is not None
+
+
+def normalise_version(version: str) -> str:
+    """Strip 'v' prefix if present and return clean version string."""
+    if version.startswith("v") or version.startswith("V"):
+        return version[1:]
+    return version
+
+
+def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name: str = "bump-version") -> bool:
+    """
+    Stage all files in pack directory, commit, and create a Git tag.
+    
+    Args:
+        pack_name: Name of the pack.
+        version: Version string (without 'v' prefix).
+        pack_path: Path to the pack directory.
+        command_name: Name of command for error messages.
+    
+    Returns:
+        True if successful, False otherwise.
+    """
+    try:
+        git_user_name = subprocess.run(
+            ["git", "config", "--get", "user.name"],
+            capture_output=True, text=True
+        )
+        git_user_email = subprocess.run(
+            ["git", "config", "--get", "user.email"],
+            capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        click.echo("[WARN] Git not found, skipping tag creation")
+        return False
+    
+    if not git_user_name.stdout.strip() or not git_user_email.stdout.strip():
+        click.echo("")
+        click.echo("[ERROR] Git identity not configured")
+        click.echo("")
+        click.echo("  The --tag flag requires git user.name and user.email to be set.")
+        click.echo("")
+        click.echo("  Configuration           Status")
+        click.echo("  ---------------------   ------")
+        name_status = "[OK] set" if git_user_name.stdout.strip() else "[MISSING]"
+        email_status = "[OK] set" if git_user_email.stdout.strip() else "[MISSING]"
+        click.echo(f"  user.name               {name_status}")
+        click.echo(f"  user.email              {email_status}")
+        click.echo("")
+        click.echo("When using Docker, mount your git config:")
+        click.echo("")
+        click.echo("  docker run --rm \\")
+        click.echo("    -v $(pwd):/content \\")
+        click.echo("    -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\")
+        click.echo(f"    ghcr.io/gocortexio/spellbook {command_name} {pack_name} --tag")
+        click.echo("")
+        sys.exit(1)
+    
+    tag_name = f"{pack_name}-v{version}"
+    try:
+        subprocess.run(
+            ["git", "add", str(pack_path)],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commit_message = f"{pack_name} v{version}"
+        subprocess.run(
+            ["git", "commit", "-m", commit_message],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        click.echo(f"[OK] Committed: {commit_message}")
+        subprocess.run(
+            ["git", "tag", tag_name],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        click.echo(f"[OK] Created Git tag: {tag_name}")
+        click.echo(f"     Push with: git push && git push origin {tag_name}")
+        return True
+    except subprocess.CalledProcessError as e:
+        click.echo(f"[WARN] Failed to create Git tag: {e.stderr.strip()}")
+        return False
+    except FileNotFoundError:
+        click.echo("[WARN] Git not found, skipping tag creation")
+        return False
+
+
 BANNER = r"""
-    *    .        *         .        *        .    *          /\
-        .    *        .         *         .                  /  \
-   .        *    .        *    .    *         .    *        /____\
-       _____            _ _ _                 _          <   (O O)   >
-      / ____|          | | | |               | |             ####
-     | (___  _ __   ___| | | |__   ___   ___ | | __          \~~~/
-  *   \___ \| '_ \ / _ \ | | '_ \ / _ \ / _ \| |/ /   *     _/ || \_
-      ____) | |_) |  __/ | | |_) | (_) | (_) |   <        /{      }\
-     |_____/| .__/ \___|_|_|_.__/ \___/ \___/|_|\_\      ( {{    }} )
-            | |                                          \_/    \_/
-    .    *  |_|  .    *         .         *    .
-        *        .    *    .        *   .        *
-   *        .         *        .            *      .
+                             /\
+                            /  \
+                           |    |
+                         --:'''':--
+                           :'_' :
+                           _:"":\___
+                     ____.' :::     '._
+                *=====<<=)           \    :
+                 '      '-'-'\_      /'._.'
+                             \====:_ ""
+                            .'     \\
+                           :       :
+                          /   :    \
+                         :   .      '.
+      _____              :  : :      :            _
+     / ____|             :__:-:__.;--'           | |
+    | (___  _ __   ___   '-'   '-'    ___   ___ | | __
+     \___ \| '_ \ / _ \  ,. _        / _ \ / _ \| |/ /
+     ____) | |_) |  __/'-'    ).    | (_) | (_) |   <
+    |_____/| .__/ \___| (     '  )   \___/ \___/|_|\_\
+           | |      ( -  .00.  - _
+           |_|     (   .'  _ )    )
+                   '- ()_.\,\,  -
 """
 
 
@@ -118,7 +228,7 @@ def cli(ctx):
         click.echo("  Cortex Platform Content Pack Builder")
         click.echo("")
         click.echo(f"  spellbook-version: {versions['spellbook']}")
-        click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']}")
+        click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']} (PINNED)")
         click.echo(f"  python-version: {versions['python']}")
         click.echo("")
         click.echo("  Run 'spellbook.py --help' for available commands.")
@@ -243,17 +353,12 @@ def list_packs(config):
     help="Run validation before packaging."
 )
 @click.option(
-    "--lint/--no-lint",
-    default=False,
-    help="Run linting before packaging."
-)
-@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def build(pack_name, build_all, validate, lint, config):
+def build(pack_name, build_all, validate, config):
     """Build and package content packs.
 
     Specify a PACK_NAME to build a single pack, or use --all to build
@@ -263,20 +368,13 @@ def build(pack_name, build_all, validate, lint, config):
     builder = PackBuilder(config)
 
     if build_all:
-        results = builder.build_all_packs(
-            validate=validate,
-            lint=lint
-        )
+        results = builder.build_all_packs(validate=validate)
         success = sum(1 for r in results.values() if r is not None)
         failed = len(results) - success
         click.echo(f"\nBuild complete: {success} succeeded, {failed} failed")
     elif pack_name:
         builder.validate_pack_exists(pack_name)
-        result = builder.build_pack(
-            pack_name,
-            validate=validate,
-            lint=lint
-        )
+        result = builder.build_pack(pack_name, validate=validate)
         if result:
             click.echo(f"\nBuild successful: {result}")
         else:
@@ -357,23 +455,6 @@ def validate_all(config):
         click.echo(f"\n[PASS] All {len(packs)} packs validated")
 
 
-@cli.command()
-@click.argument("pack_name")
-@click.option(
-    "--config",
-    "-c",
-    default="spellbook.yaml",
-    help="Path to configuration file."
-)
-def lint(pack_name, config):
-    """Lint a content pack using demisto-sdk pre-commit."""
-    builder = PackBuilder(config)
-    builder.validate_pack_exists(pack_name)
-    if builder.lint_pack(pack_name):
-        click.echo("[PASS] Linting passed")
-    else:
-        click.echo("[FAIL] Linting failed")
-        sys.exit(1)
 
 
 @cli.command()
@@ -447,17 +528,45 @@ def version(pack_name, config):
 @click.argument("pack_name")
 @click.argument("new_version")
 @click.option(
+    "--tag",
+    "-t",
+    is_flag=True,
+    default=False,
+    help="Create a Git tag for the new version."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def set_version(pack_name, new_version, config):
-    """Set the version for a pack."""
+def set_version(pack_name, new_version, tag, config):
+    """Set the version for a pack.
+    
+    Accepts version with or without 'v' prefix (e.g., 2.0.0 or v2.0.0).
+    Use --tag to stage all pack files, commit, and create a Git tag.
+    """
+    clean_version = normalise_version(new_version)
+    
+    if not validate_version_format(clean_version):
+        click.echo(f"[ERROR] Invalid version format: {new_version}")
+        click.echo("")
+        click.echo("  Version must match format X.Y.Z where X, Y, Z are integers.")
+        click.echo("")
+        click.echo("  Examples:")
+        click.echo("    gocortex-spellbook set-version MyPack 2.0.0")
+        click.echo("    gocortex-spellbook set-version MyPack v2.0.0")
+        click.echo("")
+        sys.exit(1)
+    
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
-    builder.update_pack_version(pack_name, new_version)
-    click.echo(f"[OK] Set {pack_name} version to {new_version}")
+    builder.update_pack_version(pack_name, clean_version)
+    click.echo(f"[OK] Set {pack_name} version to {clean_version}")
+    
+    if tag:
+        pack_path = builder.packs_dir / pack_name
+        create_pack_tag(pack_name, clean_version, pack_path, "set-version")
 
 
 @cli.command("bump-version")
@@ -572,70 +681,7 @@ def bump_version(pack_name, major, minor, revision, tag, config):
         click.echo(f"       {release_notes_path}")
 
     if tag:
-        try:
-            git_user_name = subprocess.run(
-                ["git", "config", "--get", "user.name"],
-                capture_output=True, text=True
-            )
-            git_user_email = subprocess.run(
-                ["git", "config", "--get", "user.email"],
-                capture_output=True, text=True
-            )
-        except FileNotFoundError:
-            click.echo("[WARN] Git not found, skipping tag creation")
-            return
-        
-        if not git_user_name.stdout.strip() or not git_user_email.stdout.strip():
-            click.echo("")
-            click.echo("[ERROR] Git identity not configured")
-            click.echo("")
-            click.echo("  The --tag flag requires git user.name and user.email to be set.")
-            click.echo("")
-            click.echo("  Configuration           Status")
-            click.echo("  ---------------------   ------")
-            name_status = "[OK] set" if git_user_name.stdout.strip() else "[MISSING]"
-            email_status = "[OK] set" if git_user_email.stdout.strip() else "[MISSING]"
-            click.echo(f"  user.name               {name_status}")
-            click.echo(f"  user.email              {email_status}")
-            click.echo("")
-            click.echo("When using Docker, mount your git config:")
-            click.echo("")
-            click.echo("  docker run --rm \\")
-            click.echo("    -v $(pwd):/content \\")
-            click.echo("    -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\")
-            click.echo(f"    ghcr.io/gocortexio/spellbook bump-version {pack_name} --tag")
-            click.echo("")
-            sys.exit(1)
-        
-        tag_name = f"{pack_name}-v{new_version}"
-        try:
-            metadata_path = pack_path / "pack_metadata.json"
-            subprocess.run(
-                ["git", "add", str(metadata_path), str(release_notes_path)],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            commit_message = f"{pack_name} v{new_version}"
-            subprocess.run(
-                ["git", "commit", "-m", commit_message],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            click.echo(f"[OK] Committed: {commit_message}")
-            result = subprocess.run(
-                ["git", "tag", tag_name],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            click.echo(f"[OK] Created Git tag: {tag_name}")
-            click.echo(f"     Push with: git push && git push origin {tag_name}")
-        except subprocess.CalledProcessError as e:
-            click.echo(f"[WARN] Failed to create Git tag: {e.stderr.strip()}")
-        except FileNotFoundError:
-            click.echo("[WARN] Git not found, skipping tag creation")
+        create_pack_tag(pack_name, new_version, pack_path, "bump-version")
 
 
 @cli.command("rename-content")

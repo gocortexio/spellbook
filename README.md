@@ -20,14 +20,14 @@ What it does:
 
 Why it exists:
 
-The demisto-sdk is powerful but complex. Spellbook wraps it in a simpler interface and provides working templates that have been verified to upload successfully.
+The demisto-sdk has many features and validation rules. Spellbook wraps it in a simpler interface and provides working templates that have been verified to upload successfully.
 
 ## Features
 
 - Instance initialisation with optional GitHub Actions templates
 - Multi-pack support within a single content instance
 - Content renaming to fix naming mismatches after copying packs
-- Validation and linting using demisto-sdk
+- Validation using demisto-sdk
 - Automated packaging into distributable zip files
 - Direct upload to Cortex Platform instances
 
@@ -79,7 +79,6 @@ docker run --rm \
 | list-packs | List all discovered packs |
 | validate | Validate a pack using demisto-sdk |
 | validate-all | Validate all packs |
-| lint | Lint a pack using demisto-sdk pre-commit |
 | build | Build and package packs |
 | upload | Upload a pack to Cortex Platform |
 | version | Show version information for a pack |
@@ -142,6 +141,9 @@ gocortex-spellbook version SamplePack
 # Set a specific version
 gocortex-spellbook set-version SamplePack 2.0.0
 
+# Set version and create Git tag (stages all pack files)
+gocortex-spellbook set-version SamplePack 2.0.0 --tag
+
 # Increment revision (1.0.0 -> 1.0.1) - default behaviour
 gocortex-spellbook bump-version SamplePack
 
@@ -158,11 +160,11 @@ gocortex-spellbook bump-version SamplePack --major
 gocortex-spellbook bump-version SamplePack --tag
 ```
 
-The `--tag` flag creates a Git tag in the format `PackName-v1.0.1` which triggers CI/CD builds when pushed. Use `git push origin PackName-v1.0.1` after tagging.
+The `--tag` flag stages all files in the pack directory, commits them, and creates a Git tag in the format `PackName-v1.0.1`. This captures all your work on the pack in a single commit. Push with `git push && git push origin PackName-v1.0.1` to trigger CI/CD builds.
 
 ## Licence
 
-This project is available under the MIT Licence.
+This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See the [LICENSE](LICENSE) file for the full licence text.
 
 ## References
 
