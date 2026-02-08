@@ -10,8 +10,8 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
 
+import click
 import yaml
 
 
@@ -59,7 +59,7 @@ class PackTemplate:
         self.packs_dir = Path(self.config.get("packs_directory", "Packs"))
         self.defaults = self.config.get("defaults", {})
 
-    def _load_config(self, config_path: str) -> Dict:
+    def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file."""
         path = Path(config_path)
         if path.exists():
@@ -71,9 +71,9 @@ class PackTemplate:
         self,
         pack_name: str,
         description: str = "",
-        author: Optional[str] = None,
-        categories: Optional[List[str]] = None,
-        create_directories: Optional[List[str]] = None
+        author: str | None = None,
+        categories: list[str] | None = None,
+        create_directories: list[str] | None = None
     ) -> Path:
         """
         Create a new pack with standard structure.
@@ -112,7 +112,7 @@ class PackTemplate:
             gitkeep = dir_path / ".gitkeep"
             gitkeep.touch()
 
-        print(f"Created pack: {pack_path}")
+        click.echo(f"Created pack: {pack_path}")
         return pack_path
 
     def _create_metadata(
@@ -120,8 +120,8 @@ class PackTemplate:
         pack_path: Path,
         pack_name: str,
         description: str,
-        author: Optional[str],
-        categories: Optional[List[str]]
+        author: str | None,
+        categories: list[str] | None
     ) -> None:
         """Create pack_metadata.json file."""
         metadata = {
@@ -495,6 +495,12 @@ alter
 ##### {pack_name} Example
 
 - Initial release of example report.
+
+#### Triggers
+
+##### {pack_name} Alert Handler
+
+- Initial release of alert handler trigger.
 """
 
         with open(notes_dir / "1_0_0.md", "w", encoding="utf-8") as f:
@@ -602,11 +608,47 @@ alter
             json.dump(report_data, f, indent=2)
             f.write("\n")
 
+    def _create_trigger(self, pack_path: Path, pack_name: str) -> None:
+        """Create sample trigger for Cortex Platform.
+        
+        Creates an example trigger JSON file that links alerts to playbooks.
+        Triggers define which playbook runs when specific alert conditions are met.
+        """
+        triggers_dir = pack_path / "Triggers"
+        triggers_dir.mkdir(exist_ok=True)
+        
+        trigger_id = f"{pack_name.lower()}_example_trigger"
+        trigger_name = f"{pack_name} Alert Handler"
+        
+        trigger_data = {
+            "trigger_name": trigger_name,
+            "trigger_id": trigger_id,
+            "playbook_id": "PLAYBOOK_ID_HERE",
+            "suggestion_reason": f"Recommended for handling {pack_name} alerts",
+            "description": f"Triggers the {pack_name} response playbook when matching alerts are detected.",
+            "alerts_filter": {
+                "filter": {
+                    "AND": [
+                        {
+                            "SEARCH_FIELD": "alert_source",
+                            "SEARCH_TYPE": "EQ",
+                            "SEARCH_VALUE": pack_name
+                        }
+                    ]
+                }
+            }
+        }
+        
+        trigger_path = triggers_dir / f"{pack_name}ExampleTrigger.json"
+        with open(trigger_path, "w", encoding="utf-8") as f:
+            json.dump(trigger_data, f, indent=2)
+            f.write("\n")
+
     def create_xsiam_content(self, pack_path: Path, pack_name: str) -> None:
         """Create Cortex Platform content structure.
         
         Creates complete XSIAM content including ParsingRules, ModelingRules,
-        CorrelationRules, XSIAMDashboards, XSIAMReports, and ReleaseNotes.
+        CorrelationRules, XSIAMDashboards, XSIAMReports, Triggers, and ReleaseNotes.
         All templates follow the official demisto-sdk schemas and are based
         on working examples from the demisto/content repository.
         """
@@ -615,9 +657,10 @@ alter
         self._create_correlation_rule(pack_path, pack_name)
         self._create_xsiam_dashboard(pack_path, pack_name)
         self._create_xsiam_report(pack_path, pack_name)
+        self._create_trigger(pack_path, pack_name)
         self._create_release_notes(pack_path, pack_name)
 
-    def list_templates(self) -> List[str]:
+    def list_templates(self) -> list[str]:
         """List available pack templates."""
         return ["default", "integration", "playbook", "minimal"]
 

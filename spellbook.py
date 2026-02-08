@@ -21,6 +21,7 @@ from spellbook.pack_template import PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
 from spellbook.xsiam_validator import XSIAMValidator
+from spellbook.content_importer import CorrelationImporter
 
 
 PINNED_SDK_VERSION = "1.38.18"
@@ -104,7 +105,45 @@ def normalise_version(version: str) -> str:
     return version
 
 
-def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name: str = "bump-version") -> bool:
+def check_git_repository(command_name: str = "bump-version") -> bool:
+    """
+    Check if the current directory is within a Git repository.
+    
+    Args:
+        command_name: Name of command for error messages.
+    
+    Returns:
+        True if in a Git repository, exits with error otherwise.
+    """
+    try:
+        git_check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True
+        )
+        if git_check.returncode != 0:
+            click.echo("")
+            click.echo("[ERROR] Git repository not initialised")
+            click.echo("")
+            click.echo("  The --tag flag requires a Git repository to create commits and tags.")
+            click.echo("")
+            click.echo("  To initialise Git in your content directory:")
+            click.echo("")
+            click.echo("    git init")
+            click.echo("    git add .")
+            click.echo("    git commit -m \"Initial commit\"")
+            click.echo("")
+            sys.exit(1)
+        return True
+    except FileNotFoundError:
+        click.echo("[ERROR] Git not found")
+        click.echo("")
+        click.echo("  The --tag flag requires Git to be installed.")
+        click.echo("")
+        sys.exit(1)
+
+
+def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name: str = "bump-version", message: str | None = None) -> bool:
     """
     Stage all files in pack directory, commit, and create a Git tag.
     
@@ -113,6 +152,7 @@ def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name:
         version: Version string (without 'v' prefix).
         pack_path: Path to the pack directory.
         command_name: Name of command for error messages.
+        message: Optional custom commit message. If not provided, uses default format.
     
     Returns:
         True if successful, False otherwise.
@@ -160,7 +200,7 @@ def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name:
             text=True,
             check=True
         )
-        commit_message = f"{pack_name} v{version}"
+        commit_message = message if message else f"{pack_name} v{version}"
         subprocess.run(
             ["git", "commit", "-m", commit_message],
             capture_output=True,
@@ -535,12 +575,18 @@ def version(pack_name, config):
     help="Create a Git tag for the new version."
 )
 @click.option(
+    "--message",
+    "-m",
+    default=None,
+    help="Custom commit message (requires --tag)."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def set_version(pack_name, new_version, tag, config):
+def set_version(pack_name, new_version, tag, message, config):
     """Set the version for a pack.
     
     Accepts version with or without 'v' prefix (e.g., 2.0.0 or v2.0.0).
@@ -559,6 +605,19 @@ def set_version(pack_name, new_version, tag, config):
         click.echo("")
         sys.exit(1)
     
+    if message and not tag:
+        click.echo("[ERROR] --message requires --tag")
+        click.echo("")
+        click.echo("  The --message flag is only valid when creating a Git commit.")
+        click.echo("")
+        click.echo("  Usage:")
+        click.echo("    gocortex-spellbook set-version MyPack 2.0.0 --tag --message \"Your message\"")
+        click.echo("")
+        sys.exit(1)
+    
+    if tag:
+        check_git_repository("set-version")
+    
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
     builder.update_pack_version(pack_name, clean_version)
@@ -566,7 +625,7 @@ def set_version(pack_name, new_version, tag, config):
     
     if tag:
         pack_path = builder.packs_dir / pack_name
-        create_pack_tag(pack_name, clean_version, pack_path, "set-version")
+        create_pack_tag(pack_name, clean_version, pack_path, "set-version", message)
 
 
 @cli.command("bump-version")
@@ -597,12 +656,18 @@ def set_version(pack_name, new_version, tag, config):
     help="Create a Git tag for the new version."
 )
 @click.option(
+    "--message",
+    "-m",
+    default=None,
+    help="Custom commit message (requires --tag)."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def bump_version(pack_name, major, minor, revision, tag, config):
+def bump_version(pack_name, major, minor, revision, tag, message, config):
     """Automatically increment a pack version.
 
     Reads the current version from pack_metadata.json, increments it,
@@ -611,6 +676,19 @@ def bump_version(pack_name, major, minor, revision, tag, config):
 
     Use --tag to also create a Git tag for the new version.
     """
+    if message and not tag:
+        click.echo("[ERROR] --message requires --tag")
+        click.echo("")
+        click.echo("  The --message flag is only valid when creating a Git commit.")
+        click.echo("")
+        click.echo("  Usage:")
+        click.echo("    gocortex-spellbook bump-version MyPack --tag --message \"Your message\"")
+        click.echo("")
+        sys.exit(1)
+    
+    if tag:
+        check_git_repository("bump-version")
+    
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
 
@@ -681,7 +759,7 @@ def bump_version(pack_name, major, minor, revision, tag, config):
         click.echo(f"       {release_notes_path}")
 
     if tag:
-        create_pack_tag(pack_name, new_version, pack_path, "bump-version")
+        create_pack_tag(pack_name, new_version, pack_path, "bump-version", message)
 
 
 @cli.command("rename-content")
@@ -699,6 +777,12 @@ def rename_content(pack_name, config):
     mismatches. This command renames folders, files, and internal
     IDs in ModelingRules, ParsingRules, and CorrelationRules.
     """
+    click.echo("[INFO] The rename-content command is temporarily unavailable.")
+    click.echo("")
+    click.echo("This command is being improved to handle additional edge cases.")
+    click.echo("For now, please rename content items manually.")
+    sys.exit(0)
+
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
 
@@ -834,8 +918,7 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
     builder = PackBuilder(config)
     mismatched = builder.check_content_naming(pack_name)
     if mismatched:
-        click.echo("[WARN] Content naming mismatch detected!")
-        click.echo(f"Pack name is '{pack_name}' but content items have different names:")
+        click.echo(f"[WARN] Content naming mismatch: {pack_name} has items with different names")
         for item in mismatched[:5]:
             click.echo(f"  - {item}")
         if len(mismatched) > 5:
@@ -848,7 +931,7 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
 
     content_root = input_file.parent.parent.resolve()
     git_dir = content_root / ".git"
-    git_initialized = False
+    git_initialised = False
     
     if not git_dir.exists():
         click.echo("Setting up temporary git repository for upload...")
@@ -859,7 +942,7 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
                 capture_output=True,
                 check=True
             )
-            git_initialized = True
+            git_initialised = True
             subprocess.run(
                 ["git", "add", "-A"],
                 cwd=str(content_root),
@@ -906,7 +989,7 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
         click.echo("Install it with: pip install demisto-sdk")
         sys.exit(1)
     finally:
-        if git_initialized:
+        if git_initialised:
             try:
                 import shutil
                 shutil.rmtree(git_dir)
@@ -949,34 +1032,34 @@ def check_init(config):
     
     config_file = Path(config)
     if config_file.exists():
-        click.echo(f"  [OK] Configuration file: {config}")
+        click.echo(f"[OK] Configuration file: {config}")
     else:
-        click.echo(f"  [FAIL] Configuration file: {config} (not found)")
+        click.echo(f"[FAIL] Configuration file: {config} (not found)")
         all_ok = False
     
     if config_file.exists():
         builder = PackBuilder(config)
         if builder.check_packs_dir_exists():
             packs = builder.discover_packs()
-            click.echo(f"  [OK] Packs directory: {builder.packs_dir} ({len(packs)} pack(s))")
+            click.echo(f"[OK] Packs directory: {builder.packs_dir} ({len(packs)} pack(s))")
         else:
-            click.echo(f"  [FAIL] Packs directory: {builder.packs_dir} (not found)")
+            click.echo(f"[FAIL] Packs directory: {builder.packs_dir} (not found)")
             all_ok = False
         
         if builder.artifacts_dir.exists():
-            click.echo(f"  [OK] Artifacts directory: {builder.artifacts_dir}")
+            click.echo(f"[OK] Artifacts directory: {builder.artifacts_dir}")
         else:
-            click.echo(f"  [INFO] Artifacts directory: {builder.artifacts_dir} (will be created)")
+            click.echo(f"[INFO] Artifacts directory: {builder.artifacts_dir} (will be created)")
     
     try:
         git_check = subprocess.run(["git", "--version"], capture_output=True, text=True)
         if git_check.returncode == 0:
-            click.echo(f"  [OK] Git: {git_check.stdout.strip()}")
+            click.echo(f"[OK] Git: {git_check.stdout.strip()}")
         else:
-            click.echo("  [FAIL] Git: not found")
+            click.echo("[FAIL] Git: not found")
             all_ok = False
     except FileNotFoundError:
-        click.echo("  [FAIL] Git: not found")
+        click.echo("[FAIL] Git: not found")
         all_ok = False
         git_check = None
     
@@ -992,15 +1075,15 @@ def check_init(config):
             )
             
             if git_user_name.stdout.strip():
-                click.echo(f"  [OK] Git user.name: {git_user_name.stdout.strip()}")
+                click.echo(f"[OK] Git user.name: {git_user_name.stdout.strip()}")
             else:
-                click.echo("  [WARN] Git user.name: not set (required for --tag)")
+                click.echo("[WARN] Git user.name: not set (required for --tag)")
                 has_warnings = True
                 
             if git_user_email.stdout.strip():
-                click.echo(f"  [OK] Git user.email: {git_user_email.stdout.strip()}")
+                click.echo(f"[OK] Git user.email: {git_user_email.stdout.strip()}")
             else:
-                click.echo("  [WARN] Git user.email: not set (required for --tag)")
+                click.echo("[WARN] Git user.email: not set (required for --tag)")
                 has_warnings = True
         except FileNotFoundError:
             pass
@@ -1011,12 +1094,12 @@ def check_init(config):
             capture_output=True, text=True
         )
         if sdk_check.returncode == 0:
-            click.echo(f"  [OK] demisto-sdk: available")
+            click.echo(f"[OK] demisto-sdk: available")
         else:
-            click.echo("  [FAIL] demisto-sdk: not found")
+            click.echo("[FAIL] demisto-sdk: not found")
             all_ok = False
     except FileNotFoundError:
-        click.echo("  [FAIL] demisto-sdk: not found")
+        click.echo("[FAIL] demisto-sdk: not found")
         all_ok = False
     
     click.echo("")
@@ -1028,19 +1111,19 @@ def check_init(config):
     xsiam_auth_id = os.environ.get("XSIAM_AUTH_ID")
     
     if base_url:
-        click.echo(f"  [OK] DEMISTO_BASE_URL: {base_url[:30]}...")
+        click.echo(f"[OK] DEMISTO_BASE_URL: {base_url[:30]}...")
     else:
-        click.echo("  [INFO] DEMISTO_BASE_URL: not set (required for upload)")
+        click.echo("[INFO] DEMISTO_BASE_URL: not set (required for upload)")
     
     if api_key:
-        click.echo("  [OK] DEMISTO_API_KEY: set (hidden)")
+        click.echo("[OK] DEMISTO_API_KEY: set (hidden)")
     else:
-        click.echo("  [INFO] DEMISTO_API_KEY: not set (required for upload)")
+        click.echo("[INFO] DEMISTO_API_KEY: not set (required for upload)")
     
     if xsiam_auth_id:
-        click.echo("  [OK] XSIAM_AUTH_ID: set (hidden)")
+        click.echo("[OK] XSIAM_AUTH_ID: set (hidden)")
     else:
-        click.echo("  [INFO] XSIAM_AUTH_ID: not set (required for XSIAM upload)")
+        click.echo("[INFO] XSIAM_AUTH_ID: not set (required for XSIAM upload)")
     
     upload_ready = base_url and api_key
     
@@ -1054,6 +1137,104 @@ def check_init(config):
     else:
         click.echo("[OK] All checks passed")
     click.echo("")
+
+
+@cli.group()
+def summon():
+    """Import content from Cortex Platform exports.
+
+    Summon commands import content that has been exported from the
+    Cortex Platform and convert it to pack-ready YAML files.
+
+    \b
+    Usage:
+        cat export.json | spellbook summon correlation MyPack
+        spellbook summon correlation MyPack < export.json
+
+    \b
+    For Docker:
+        cat export.json | docker run -i --rm -v $(pwd):/content \\
+            ghcr.io/gocortexio/spellbook summon correlation MyPack
+    """
+    pass
+
+
+@summon.command("correlation")
+@click.argument("pack_name")
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def summon_correlation(pack_name, config):
+    """Import correlation rules from JSON export.
+
+    Reads a JSON array of correlation rules from stdin (piped input or
+    interactive paste followed by Ctrl+D) and creates YAML files in the
+    pack's CorrelationRules directory.
+
+    The JSON must be an array (even for single rules). Each rule is
+    cleaned of platform-specific fields, assigned a new UUID, and
+    converted to YAML format.
+
+    Example:
+      cat rules.json | spellbook summon correlation MyPack
+      spellbook summon correlation MyPack < rules.json
+    """
+    check_environment(config)
+    builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
+
+    click.echo(f"Spellbook v{__version__}")
+    click.echo("")
+    click.echo(f"Summoning correlation rules into {pack_name}...")
+    click.echo("Reading from stdin (paste JSON, then Ctrl+D to finish)")
+    click.echo("")
+
+    try:
+        json_content = sys.stdin.read()
+    except KeyboardInterrupt:
+        click.echo("")
+        click.echo("[INFO] Cancelled")
+        sys.exit(0)
+
+    if not json_content.strip():
+        click.echo("[ERROR] No input received")
+        click.echo("")
+        click.echo("  Pipe JSON content or paste and press Ctrl+D:")
+        click.echo("    cat rules.json | spellbook summon correlation MyPack")
+        click.echo("")
+        sys.exit(1)
+
+    importer = CorrelationImporter(builder.packs_dir)
+
+    try:
+        results = importer.import_from_json(json_content, pack_name)
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+
+    success_count = 0
+    for result in results:
+        if result["success"]:
+            for warning in result.get("warnings", []):
+                click.echo(f"[WARN] {result['name']}: {warning}")
+            if result.get("overwritten"):
+                click.echo(f"[WARN] {result['name']}: overwrote {result['filename']}")
+            else:
+                click.echo(f"[OK] {result['name']}: created {result['filename']}")
+            success_count += 1
+        else:
+            click.echo(f"[ERROR] {result['name']}: {result['error']}")
+
+    click.echo("")
+    if success_count == len(results):
+        click.echo(f"[OK] Summoned {success_count} correlation rule(s) to {pack_name}")
+    else:
+        failed = len(results) - success_count
+        click.echo(f"[WARN] Summoned {success_count} rule(s), {failed} failed")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

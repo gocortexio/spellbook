@@ -74,8 +74,9 @@ docker run --rm \
 | Command | Description |
 |---------|-------------|
 | init | Create a new content instance with starter pack |
+| check-init | Check the initialised instance environment |
+| list-instances | List all content instances |
 | create | Create a new pack from template |
-| rename-content | Rename content items to match pack name |
 | list-packs | List all discovered packs |
 | validate | Validate a pack using demisto-sdk |
 | validate-all | Validate all packs |
@@ -84,6 +85,7 @@ docker run --rm \
 | version | Show version information for a pack |
 | set-version | Set a specific version for a pack |
 | bump-version | Automatically increment pack version |
+| summon correlation | Import correlation rules from platform JSON export |
 
 ## Instance Structure
 
@@ -158,9 +160,12 @@ gocortex-spellbook bump-version SamplePack --major
 
 # Bump version and create Git tag for CI/CD
 gocortex-spellbook bump-version SamplePack --tag
+
+# Bump with custom commit message (for auto-closing issues)
+gocortex-spellbook bump-version SamplePack --tag -m "Closes #123"
 ```
 
-The `--tag` flag stages all files in the pack directory, commits them, and creates a Git tag in the format `PackName-v1.0.1`. This captures all your work on the pack in a single commit. Push with `git push && git push origin PackName-v1.0.1` to trigger CI/CD builds.
+The `--tag` flag stages all files in the pack directory, commits them, and creates a Git tag in the format `PackName-v1.0.1`. Use `--message` or `-m` to specify a custom commit message for CI/CD integration. Push with `git push && git push origin PackName-v1.0.1` to trigger CI/CD builds.
 
 ## Licence
 

@@ -12,8 +12,8 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional
 
+import click
 import yaml
 
 from .version_manager import VersionManager
@@ -76,7 +76,7 @@ class PackBuilder:
             self.config.get("version_tag_pattern", "{pack_name}-v{version}")
         )
 
-    def _load_config(self, config_path: str) -> Dict:
+    def _load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file."""
         path = Path(config_path)
         if path.exists():
@@ -92,7 +92,7 @@ class PackBuilder:
         """Check if the Packs directory exists."""
         return self.packs_dir.exists()
 
-    def discover_packs(self) -> List[str]:
+    def discover_packs(self) -> list[str]:
         """
         Discover all content packs in the packs directory.
 
@@ -144,14 +144,14 @@ class PackBuilder:
         """
         if not self.pack_exists(pack_name):
             available = self.discover_packs()
-            print(f"[ERROR] Pack '{pack_name}' not found")
+            click.echo(f"[ERROR] Pack '{pack_name}' not found")
             if available:
-                print(f"Available packs: {', '.join(available)}")
+                click.echo(f"Available packs: {', '.join(available)}")
             else:
-                print("No packs found in Packs/ directory")
+                click.echo("No packs found in Packs/ directory")
             raise SystemExit(1)
 
-    def read_pack_metadata(self, pack_name: str) -> Dict:
+    def read_pack_metadata(self, pack_name: str) -> dict:
         """
         Read pack metadata from pack_metadata.json.
 
@@ -169,13 +169,13 @@ class PackBuilder:
                 if content.strip():
                     return json.loads(content)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                print(f"Warning: Could not parse {metadata_path}: {e}")
+                click.echo(f"[WARN] {metadata_path}: could not parse ({e})")
         return {"name": pack_name, "currentVersion": "1.0.0"}
 
     def update_pack_metadata(
         self,
         pack_name: str,
-        updates: Dict
+        updates: dict
     ) -> None:
         """
         Update pack metadata file.
@@ -199,7 +199,7 @@ class PackBuilder:
     def update_pack_version(
         self,
         pack_name: str,
-        version: Optional[str] = None
+        version: str | None = None
     ) -> str:
         """
         Update pack version based on Git tags or specified version.
@@ -229,16 +229,16 @@ class PackBuilder:
         """
         validation_config = self.config.get("validation", {})
         if not validation_config.get("enabled", True):
-            print(f"Validation disabled, skipping {pack_name}")
+            click.echo(f"Validation disabled, skipping {pack_name}")
             return True
 
         pack_path = self.get_pack_path(pack_name)
         content_root = pack_path.parent.parent.resolve()
         
         git_dir = content_root / ".git"
-        git_initialized = False
+        git_initialised = False
         if not git_dir.exists():
-            print("Setting up temporary git repository for validation...")
+            click.echo("Setting up temporary git repository for validation...")
             try:
                 subprocess.run(
                     ["git", "init"],
@@ -246,7 +246,7 @@ class PackBuilder:
                     capture_output=True,
                     check=True
                 )
-                git_initialized = True
+                git_initialised = True
                 subprocess.run(
                     ["git", "add", "-A"],
                     cwd=str(content_root),
@@ -261,7 +261,7 @@ class PackBuilder:
                     check=True
                 )
             except subprocess.CalledProcessError as e:
-                print(f"Warning: Could not initialise git repository: {e}")
+                click.echo(f"Warning: Could not initialise git repository: {e}")
         
         cmd = ["demisto-sdk", "validate", "-i", str(pack_path)]
 
@@ -281,22 +281,22 @@ class PackBuilder:
                 env=env,
                 cwd=str(content_root)
             )
-            print(result.stdout, end="")
+            click.echo(result.stdout, nl=False)
             if result.stderr:
-                print(result.stderr, end="")
+                click.echo(result.stderr, nl=False)
             
             if result.returncode == 0:
-                print(f"Validation passed for {pack_name}")
+                click.echo(f"Validation passed for {pack_name}")
                 self._check_gitkeep_files(pack_name)
                 return True
             else:
-                print(f"Validation failed for {pack_name}")
+                click.echo(f"Validation failed for {pack_name}")
                 return False
         except FileNotFoundError:
-            print("demisto-sdk not found, skipping validation")
+            click.echo("demisto-sdk not found, skipping validation")
             return True
         finally:
-            if git_initialized:
+            if git_initialised:
                 try:
                     shutil.rmtree(git_dir)
                 except Exception:
@@ -317,17 +317,16 @@ class PackBuilder:
         gitkeep_files = list(pack_path.rglob(".gitkeep"))
         
         if gitkeep_files:
-            print("")
-            print("[WARN] .gitkeep files found in pack (remove empty folders before public marketplace submission):")
+            click.echo()
             for f in gitkeep_files:
                 relative = f.relative_to(pack_path)
-                print(f"[WARN]   {relative}")
+                click.echo(f"[WARN] {pack_name}: .gitkeep found at {relative} (remove empty folders before marketplace submission)")
 
     def package_pack(
         self,
         pack_name: str,
-        output_dir: Optional[Path] = None
-    ) -> Optional[Path]:
+        output_dir: Path | None = None
+    ) -> Path | None:
         """
         Package a pack into a zip file.
 
@@ -343,19 +342,19 @@ class PackBuilder:
         """
         packaging_config = self.config.get("packaging", {})
         if not packaging_config.get("create_zip", True):
-            print(f"Zip creation disabled, skipping {pack_name}")
+            click.echo(f"Zip creation disabled, skipping {pack_name}")
             return None
 
         pack_path = self.get_pack_path(pack_name)
         if not pack_path.exists():
-            print(f"Pack not found: {pack_name}")
+            click.echo(f"Pack not found: {pack_name}")
             return None
 
         if output_dir is None:
             output_dir = self.artifacts_dir
 
         if output_dir is None:
-            print(f"No output directory configured for {pack_name}")
+            click.echo(f"No output directory configured for {pack_name}")
             return None
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -374,11 +373,11 @@ class PackBuilder:
                         arcname = os.path.relpath(file_path, pack_path)
                         zipf.write(file_path, arcname)
 
-            print(f"Created package: {zip_path}")
+            click.echo(f"Created package: {zip_path}")
             return zip_path
 
         except Exception as e:
-            print(f"Failed to create package for {pack_name}: {e}")
+            click.echo(f"Failed to create package for {pack_name}: {e}")
             if zip_path.exists():
                 zip_path.unlink()
             return None
@@ -387,7 +386,7 @@ class PackBuilder:
         self,
         pack_name: str,
         validate: bool = True
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """
         Build a complete pack (validate and package).
 
@@ -398,17 +397,17 @@ class PackBuilder:
         Returns:
             Path to created zip file, or None if build failed.
         """
-        print(f"\n{'='*60}")
-        print(f"Building pack: {pack_name}")
-        print(f"{'='*60}")
+        click.echo(f"\n{'='*60}")
+        click.echo(f"Building pack: {pack_name}")
+        click.echo(f"{'='*60}")
 
         metadata = self.read_pack_metadata(pack_name)
         version = metadata.get("currentVersion", "1.0.0")
-        print(f"Version: {version}")
+        click.echo(f"Version: {version}")
 
         if validate:
             if not self.validate_pack(pack_name):
-                print(f"Build failed for {pack_name}: validation errors")
+                click.echo(f"Build failed for {pack_name}: validation errors")
                 return None
 
         return self.package_pack(pack_name)
@@ -416,7 +415,7 @@ class PackBuilder:
     def build_all_packs(
         self,
         validate: bool = True
-    ) -> Dict[str, Optional[Path]]:
+    ) -> dict[str, Path | None]:
         """
         Build all discovered packs.
 
@@ -437,7 +436,7 @@ class PackBuilder:
 
         return results
 
-    def check_content_naming(self, pack_name: str) -> List[str]:
+    def check_content_naming(self, pack_name: str) -> list[str]:
         """
         Check if content items have mismatched naming.
 
@@ -469,7 +468,7 @@ class PackBuilder:
 
         return mismatched
 
-    def rename_content(self, pack_name: str) -> Dict[str, str]:
+    def rename_content(self, pack_name: str) -> dict[str, str]:
         """
         Rename all content items to match the pack name.
 
@@ -498,7 +497,7 @@ class PackBuilder:
 
         return renamed
 
-    def _rename_modeling_rules(self, pack_path: Path, pack_name: str) -> Dict[str, str]:
+    def _rename_modeling_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
         """Rename ModelingRules content to match pack name."""
         renamed = {}
         rules_dir = pack_path / "ModelingRules"
@@ -540,7 +539,7 @@ class PackBuilder:
 
         return renamed
 
-    def _rename_parsing_rules(self, pack_path: Path, pack_name: str) -> Dict[str, str]:
+    def _rename_parsing_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
         """Rename ParsingRules content to match pack name."""
         renamed = {}
         rules_dir = pack_path / "ParsingRules"
@@ -581,7 +580,7 @@ class PackBuilder:
 
         return renamed
 
-    def _rename_correlation_rules(self, pack_path: Path, pack_name: str) -> Dict[str, str]:
+    def _rename_correlation_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
         """Rename CorrelationRules content to match pack name."""
         renamed = {}
         rules_dir = pack_path / "CorrelationRules"

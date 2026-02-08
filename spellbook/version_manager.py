@@ -9,7 +9,6 @@ Supports pack-specific versioning using the pattern: {pack_name}-v{version}
 
 import re
 import subprocess
-from typing import Optional, Tuple
 
 
 class VersionManager:
@@ -68,7 +67,7 @@ class VersionManager:
         except FileNotFoundError:
             return []
 
-    def parse_tag(self, tag: str, pack_name: str) -> Optional[str]:
+    def parse_tag(self, tag: str, pack_name: str) -> str | None:
         """
         Extract version from a tag for a specific pack.
 
@@ -182,7 +181,7 @@ class VersionManager:
         """
         return f"{pack_name}-v{version}"
 
-    def _version_tuple(self, version: str) -> Tuple[int, int, int]:
+    def _version_tuple(self, version: str) -> tuple[int, int, int]:
         """Convert version string to comparable tuple."""
         match = self.VERSION_PATTERN.match(version)
         if match:

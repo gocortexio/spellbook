@@ -122,28 +122,6 @@ docker run --rm ^
 
 ---
 
-## Rename Content
-
-### PowerShell
-
-```powershell
-docker run --rm `
-  -v ${PWD}:/content `
-  -v $env:USERPROFILE\.gitconfig:/home/spellbook/.gitconfig:ro `
-  ghcr.io/gocortexio/spellbook rename-content MyNewPack
-```
-
-### Command Prompt
-
-```cmd
-docker run --rm ^
-  -v %cd%:/content ^
-  -v %USERPROFILE%\.gitconfig:/home/spellbook/.gitconfig:ro ^
-  ghcr.io/gocortexio/spellbook rename-content MyNewPack
-```
-
----
-
 ## Validate
 
 ### PowerShell
@@ -332,6 +310,15 @@ docker run --rm `
   ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
 ```
 
+Bump with custom commit message (for CI/CD integration):
+
+```powershell
+docker run --rm `
+  -v ${PWD}:/content `
+  -v $env:USERPROFILE\.gitconfig:/home/spellbook/.gitconfig:ro `
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag -m "Closes #123"
+```
+
 ### Command Prompt
 
 Show current version:
@@ -379,6 +366,15 @@ docker run --rm ^
   ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
 ```
 
+Bump with custom commit message (for CI/CD integration):
+
+```cmd
+docker run --rm ^
+  -v %cd%:/content ^
+  -v %USERPROFILE%\.gitconfig:/home/spellbook/.gitconfig:ro ^
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag -m "Closes #123"
+```
+
 ---
 
 ## Command Reference
@@ -407,13 +403,17 @@ Replace `<command>` with any of the following:
 
 | Action | Command |
 |--------|---------|
+| Initialise instance | init my-content --author "Your Name" |
+| Check environment | check-init |
+| List instances | list-instances |
 | List packs | list-packs |
 | Create pack | create PackName |
-| Rename content | rename-content PackName |
 | Validate pack | validate PackName |
 | Validate all | validate-all |
 | Build pack | build PackName |
 | Build all | build --all |
+| Upload pack | upload PackName |
+| Upload to XSIAM | upload PackName --xsiam |
 | Show version | version PackName |
 | Set version | set-version PackName X.Y.Z |
 | Bump version | bump-version PackName |
@@ -421,6 +421,51 @@ Replace `<command>` with any of the following:
 | Bump minor | bump-version PackName --minor |
 | Bump major | bump-version PackName --major |
 | Bump and tag | bump-version PackName --tag |
+| Bump with message | bump-version PackName --tag -m "Closes #123" |
+| Import correlations | summon correlation PackName (with stdin) |
+
+---
+
+## Summon (Import from Platform)
+
+The summon command imports content exported from the Cortex Platform.
+
+### Importing Correlation Rules
+
+Export correlation rules from XSIAM as JSON, then pipe to the summon command.
+
+#### PowerShell
+
+```powershell
+Get-Content exported_rules.json | docker run -i --rm `
+  -v ${PWD}:/content `
+  -v $env:USERPROFILE\.gitconfig:/home/spellbook/.gitconfig:ro `
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+```
+
+For interactive paste (paste JSON then press Ctrl+D):
+
+```powershell
+docker run -it --rm `
+  -v ${PWD}:/content `
+  -v $env:USERPROFILE\.gitconfig:/home/spellbook/.gitconfig:ro `
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+```
+
+#### Command Prompt
+
+```cmd
+type exported_rules.json | docker run -i --rm ^
+  -v %cd%:/content ^
+  -v %USERPROFILE%\.gitconfig:/home/spellbook/.gitconfig:ro ^
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+```
+
+The command:
+- Parses the JSON array of correlation rules
+- Removes platform-specific fields (rule_id, simple_schedule, etc.)
+- Adds required fields (global_rule_id, fromversion)
+- Creates YAML files in Packs/MyPack/CorrelationRules/
 
 ---
 

@@ -109,21 +109,6 @@ This creates a properly structured pack with all required metadata files.
 
 ---
 
-## Rename Content (If Copying From Other Packs)
-
-If you have copied content items from another pack, the internal names will not match your pack name. This causes upload failures. Fix this by running:
-
-```bash
-docker run --rm \
-  -v $(pwd):/content \
-  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
-  ghcr.io/gocortexio/spellbook rename-content MyNewPack
-```
-
-This command updates all content item names and IDs to match your pack name.
-
----
-
 ## Validate
 
 Validation checks your pack against demisto-sdk rules:
@@ -296,6 +281,15 @@ docker run --rm \
   ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag
 ```
 
+Use the `--message` or `-m` flag to specify a custom commit message for CI/CD integration (e.g., auto-closing issues):
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version MyNewPack --tag -m "Closes #123"
+```
+
 The `:ro` suffix mounts the file as read-only for security. Without this mount, you will see the error "Author identity unknown".
 
 ---
@@ -314,6 +308,38 @@ This is informational text about GitHub Actions validation. It does not indicate
 
 ---
 
+## Summon (Import from Platform)
+
+The summon command imports content exported from the Cortex Platform.
+
+### Importing Correlation Rules
+
+Export correlation rules from XSIAM as JSON, then pipe to the summon command:
+
+```bash
+cat exported_rules.json | docker run -i --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+```
+
+For interactive paste (paste JSON then press Ctrl+D):
+
+```bash
+docker run -it --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+```
+
+The command:
+- Parses the JSON array of correlation rules
+- Removes platform-specific fields (rule_id, simple_schedule, etc.)
+- Adds required fields (global_rule_id, fromversion)
+- Creates YAML files in Packs/MyPack/CorrelationRules/
+
+---
+
 ## Command Reference
 
 All commands below assume you are in the my-content directory. The standard Docker invocation is:
@@ -329,13 +355,17 @@ Replace `<command>` with any of the following:
 
 | Action | Command |
 |--------|---------|
+| Initialise instance | init my-content --author "Your Name" |
+| Check environment | check-init |
+| List instances | list-instances |
 | List packs | list-packs |
 | Create pack | create PackName |
-| Rename content | rename-content PackName |
 | Validate pack | validate PackName |
 | Validate all | validate-all |
 | Build pack | build PackName |
 | Build all | build --all |
+| Upload pack | upload PackName |
+| Upload to XSIAM | upload PackName --xsiam |
 | Show version | version PackName |
 | Set version | set-version PackName X.Y.Z |
 | Bump version | bump-version PackName |
@@ -343,3 +373,5 @@ Replace `<command>` with any of the following:
 | Bump minor | bump-version PackName --minor |
 | Bump major | bump-version PackName --major |
 | Bump and tag | bump-version PackName --tag |
+| Bump with message | bump-version PackName --tag -m "Closes #123" |
+| Import correlations | summon correlation PackName (with stdin) |

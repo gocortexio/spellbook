@@ -10,7 +10,7 @@ failures encountered when pushing content to XSIAM.
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+
 from dataclasses import dataclass
 
 
@@ -21,7 +21,7 @@ class ValidationIssue:
     severity: str  # "error" or "warning"
     file_path: str
     message: str
-    line_number: Optional[int] = None
+    line_number: int | None = None
 
 
 @dataclass
@@ -43,7 +43,7 @@ class XSIAMValidator:
     but cause XSIAM upload failures (typically error 101704).
     """
 
-    RULES: List[ValidationRule] = [
+    RULES: list[ValidationRule] = [
         # Parsing Rules checks
         ValidationRule(
             name="invalid_ingest_content_id",
@@ -98,7 +98,7 @@ class XSIAMValidator:
         """
         self.packs_dir = packs_dir
 
-    def validate_pack(self, pack_name: str) -> List[ValidationIssue]:
+    def validate_pack(self, pack_name: str) -> list[ValidationIssue]:
         """
         Validate a single pack against XSIAM rules.
         
@@ -124,7 +124,7 @@ class XSIAMValidator:
         
         return issues
     
-    def _check_filenames(self, pack_path: Path) -> List[ValidationIssue]:
+    def _check_filenames(self, pack_path: Path) -> list[ValidationIssue]:
         """
         Check filenames for problematic characters.
         
@@ -177,7 +177,7 @@ class XSIAMValidator:
         
         return issues
 
-    def validate_all_packs(self) -> Dict[str, List[ValidationIssue]]:
+    def validate_all_packs(self) -> dict[str, list[ValidationIssue]]:
         """
         Validate all packs in the packs directory.
         
@@ -201,7 +201,7 @@ class XSIAMValidator:
         self,
         pack_path: Path,
         rule: ValidationRule
-    ) -> List[ValidationIssue]:
+    ) -> list[ValidationIssue]:
         """
         Check a single rule against a pack.
         
@@ -246,7 +246,7 @@ class XSIAMValidator:
         
         return issues
 
-    def format_issues(self, issues: List[ValidationIssue]) -> str:
+    def format_issues(self, issues: list[ValidationIssue]) -> str:
         """
         Format validation issues for display.
         
@@ -269,8 +269,7 @@ class XSIAMValidator:
                 location = f"{issue.file_path}"
                 if issue.line_number:
                     location += f":{issue.line_number}"
-                lines.append(f"  [ERROR] {location}")
-                lines.append(f"          {issue.message}")
+                lines.append(f"[ERROR] {location}: {issue.message}")
         
         if warnings:
             if errors:
@@ -280,7 +279,6 @@ class XSIAMValidator:
                 location = f"{issue.file_path}"
                 if issue.line_number:
                     location += f":{issue.line_number}"
-                lines.append(f"  [WARN] {location}")
-                lines.append(f"         {issue.message}")
+                lines.append(f"[WARN] {location}: {issue.message}")
         
         return "\n".join(lines)

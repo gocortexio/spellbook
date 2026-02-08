@@ -131,9 +131,15 @@ docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   ghcr.io/gocortexio/spellbook bump-version SamplePack --tag
+
+# Bump with custom commit message (for auto-closing issues)
+docker run --rm \
+  -v $(pwd):/content \
+  -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
+  ghcr.io/gocortexio/spellbook bump-version SamplePack --tag -m "Closes #123"
 ```
 
-The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers the build workflow automatically. Mounting your git config allows the container to use your Git identity for commits and tags.
+The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers the build workflow automatically. Use --message or -m to specify a custom commit message for CI/CD integration (e.g., auto-closing issues). Mounting your git config allows the container to use your Git identity for commits and tags.
 
 ---
 

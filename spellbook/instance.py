@@ -9,7 +9,6 @@ Creates and manages user content instances with their own Git structure.
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import yaml
 

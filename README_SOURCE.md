@@ -120,18 +120,6 @@ This creates a properly structured pack with all required metadata files.
 
 ---
 
-## Rename Content (If Copying From Other Packs)
-
-If you have copied content items from another pack, the internal names will not match your pack name. This causes upload failures. Fix this by running:
-
-```bash
-python spellbook.py rename-content MyNewPack -c my-content/spellbook.yaml
-```
-
-This command updates all content item names and IDs to match your pack name.
-
----
-
 ## Validate
 
 Validation checks your pack against demisto-sdk rules:
@@ -236,6 +224,9 @@ python spellbook.py bump-version MyNewPack --major -c my-content/spellbook.yaml
 
 # Bump version and create a Git tag
 python spellbook.py bump-version MyNewPack --tag -c my-content/spellbook.yaml
+
+# Bump version with custom commit message (for CI/CD integration)
+python spellbook.py bump-version MyNewPack --tag -m "Closes #123" -c my-content/spellbook.yaml
 ```
 
 ---
@@ -262,7 +253,6 @@ All commands below assume you are in the gocortex-spellbook directory:
 |--------|---------|
 | List packs | python spellbook.py list-packs -c my-content/spellbook.yaml |
 | Create pack | python spellbook.py create PackName -c my-content/spellbook.yaml |
-| Rename content | python spellbook.py rename-content PackName -c my-content/spellbook.yaml |
 | Validate pack | python spellbook.py validate PackName -c my-content/spellbook.yaml |
 | Validate all | python spellbook.py validate-all -c my-content/spellbook.yaml |
 | Build pack | python spellbook.py build PackName -c my-content/spellbook.yaml |
@@ -271,3 +261,5 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Set version | python spellbook.py set-version PackName X.Y.Z -c my-content/spellbook.yaml |
 | Bump version | python spellbook.py bump-version PackName -c my-content/spellbook.yaml |
 | Bump and tag | python spellbook.py bump-version PackName --tag -c my-content/spellbook.yaml |
+| Bump with message | python spellbook.py bump-version PackName --tag -m "Closes #123" -c my-content/spellbook.yaml |
+| Import correlations | cat rules.json \| python spellbook.py summon correlation PackName -c my-content/spellbook.yaml |
