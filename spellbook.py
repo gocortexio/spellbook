@@ -1194,6 +1194,7 @@ def summon_correlation(pack_name, config):
 
     try:
         json_content = sys.stdin.read()
+        json_content = json_content.replace("\r\n", "\n")
     except KeyboardInterrupt:
         click.echo("")
         click.echo("[INFO] Cancelled")
