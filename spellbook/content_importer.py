@@ -178,13 +178,42 @@ class CorrelationImporter:
                 continue
             if value is None and key not in self.FIELDS_TO_PRESERVE_NULL:
                 continue
-            cleaned[key] = value
+            cleaned[key] = self._normalise_line_endings(value, field_name=key)
 
         for field_name, generator in self.FIELDS_TO_ADD.items():
             if field_name not in cleaned:
                 cleaned[field_name] = generator()
 
         return cleaned
+
+    XQL_FIELDS = {"xql_query", "search_query"}
+
+    def _normalise_line_endings(self, value: Any, field_name: str | None = None) -> Any:
+        """Normalise line endings in string values.
+
+        Strips carriage returns from all strings. For XQL query fields,
+        also collapses consecutive blank lines and trims whitespace.
+        Recurses into dicts and lists to catch nested values.
+
+        Args:
+            value: Any value from a parsed rule.
+            field_name: Name of the field being processed.
+
+        Returns:
+            Value with normalised line endings.
+        """
+        if isinstance(value, str):
+            result = value.replace("\r\n", "\n").replace("\r", "\n")
+            if field_name in self.XQL_FIELDS:
+                result = re.sub(r"\n{2,}", "\n", result)
+                result = "\n".join(line.rstrip() for line in result.split("\n"))
+                result = result.strip()
+            return result
+        if isinstance(value, dict):
+            return {k: self._normalise_line_endings(v, field_name=k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._normalise_line_endings(item, field_name=field_name) for item in value]
+        return value
 
     def _generate_filename(self, name: str) -> str:
         """Generate a valid filename from the rule name.

@@ -7,5 +7,5 @@ A Python-based toolset for building, validating, and packaging
 Cortex Platform content packs.
 """
 
-__version__ = "1.20.1"
+__version__ = "1.20.2"
 __author__ = "GoCortexIO - Simon Sigre"
