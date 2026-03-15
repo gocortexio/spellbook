@@ -143,27 +143,6 @@ The --tag flag creates a Git tag in the format PackName-vX.Y.Z which triggers th
 
 ---
 
-## Optional: PR Validation Enhancements
-
-The default validate.yml workflow runs basic validation. You can enhance it with additional checks.
-
-Add a check for naming consistency by editing .github/workflows/validate.yml:
-
-```yaml
-      - name: Check content naming
-        run: |
-          for pack in Packs/*/; do
-            pack_name=$(basename "$pack")
-            docker run --rm \
-              -v ${{ github.workspace }}/Packs:/content/Packs \
-              -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-              ghcr.io/gocortexio/spellbook:latest \
-              check-naming "$pack_name"
-          done
-```
-
----
-
 ## GitLab CI/CD Pipelines
 
 Your instance also includes a .gitlab-ci.yml file for GitLab CI/CD. This provides equivalent functionality to the GitHub Actions workflows.

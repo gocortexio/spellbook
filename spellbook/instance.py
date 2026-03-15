@@ -70,6 +70,8 @@ class InstanceManager:
 
         self._create_sample_pack(instance_path, author)
 
+        self._create_templates_directory(instance_path)
+
         return instance_path
 
     def _create_packs_directory(self, instance_path: Path) -> None:
@@ -523,6 +525,13 @@ docker run --rm -v $(pwd):/content \\
         )
 
         template.create_xsiam_content(pack_path, "SamplePack")
+
+    def _create_templates_directory(self, instance_path: Path) -> None:
+        """Copy built-in templates to the instance templates directory."""
+        from .template_renderer import copy_builtin_templates
+
+        templates_dir = instance_path / "templates"
+        copy_builtin_templates(templates_dir)
 
     def list_instances(self) -> list:
         """

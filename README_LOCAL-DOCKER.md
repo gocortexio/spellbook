@@ -364,8 +364,10 @@ Replace `<command>` with any of the following:
 | Validate all | validate-all |
 | Build pack | build PackName |
 | Build all | build --all |
-| Upload pack | upload PackName |
-| Upload to XSIAM | upload PackName --xsiam |
+| Build without validation | build --all --no-validate |
+| Upload pack | upload Packs/PackName |
+| Upload to XSIAM | upload Packs/PackName --xsiam |
+| Upload without validation | upload Packs/PackName --xsiam --skip-validation |
 | Show version | version PackName |
 | Set version | set-version PackName X.Y.Z |
 | Bump version | bump-version PackName |
@@ -375,3 +377,5 @@ Replace `<command>` with any of the following:
 | Bump and tag | bump-version PackName --tag |
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
 | Import correlations | summon correlation PackName (with stdin) |
+| Generate from template | summon template intel_retrohunt PackName --set KEY=VALUE |
+| List templates | summon template --list |

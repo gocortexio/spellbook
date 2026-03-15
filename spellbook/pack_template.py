@@ -216,6 +216,15 @@ Upload the pack zip file to your Cortex Platform instance.
 ## Support
 
 For support, please refer to the pack metadata for contact information.
+
+## Version History (Managed by GoCortex Spellbook)
+
+<!-- spellbook:version-history:start -->
+### 1.0.0
+
+- Initial release.
+
+<!-- spellbook:version-history:end -->
 """
         readme_path = pack_path / "README.md"
         with open(readme_path, "w", encoding="utf-8") as f:

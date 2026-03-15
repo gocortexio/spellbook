@@ -23,13 +23,13 @@ class CorrelationImporter:
     FIELDS_TO_REMOVE = {
         "rule_id",
         "simple_schedule",
-        "user_defined_severity",
-        "user_defined_category",
         "lookup_mapping",
     }
 
     FIELDS_TO_PRESERVE_NULL = {
         "alert_type",
+        "user_defined_severity",
+        "user_defined_category",
     }
 
     FIELDS_TO_ADD = {
@@ -179,6 +179,11 @@ class CorrelationImporter:
             if value is None and key not in self.FIELDS_TO_PRESERVE_NULL:
                 continue
             cleaned[key] = self._normalise_line_endings(value, field_name=key)
+
+        if cleaned.get("severity") != "User Defined":
+            cleaned.pop("user_defined_severity", None)
+        if cleaned.get("alert_category") != "User Defined":
+            cleaned.pop("user_defined_category", None)
 
         for field_name, generator in self.FIELDS_TO_ADD.items():
             if field_name not in cleaned:

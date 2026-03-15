@@ -1,0 +1,149 @@
+version: 1
+vcShouldKeepItemLegacyProdMachine: false
+name: Retrospective Intel Hunt Back %%DATASET%%
+starttaskid: "0"
+tasks:
+  "0":
+    id: "0"
+    type: start
+    task:
+      version: -1
+      name: ""
+      iscommand: false
+      brand: ""
+      playbooktaskmissingcomponent: null
+      istaskmissingcomponenterrordismissed: false
+    nexttasks:
+      '#none#':
+      - "1"
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": -120,
+          "y": 60
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+  "1":
+    id: "1"
+    type: regular
+    task:
+      version: -1
+      name: Retrospective Intel Hunt Back - %%DATASET%% (%%LOOKBACK%%)
+      description: |-
+        Execute an XQL query and retrieve results of an executed XQL query API. The command will be executed every 10 seconds until results are retrieved or until a timeout error is raised.
+        When more than 1000 results are retrieved, the command will return a compressed gzipped JSON format file,
+        unless the argument 'parse_result_file_to_context' is set to true and then the results will be extracted to the context.
+      script: '|||xdr-xql-generic-query'
+      type: regular
+      iscommand: true
+      brand: ""
+      playbooktaskmissingcomponent: null
+      istaskmissingcomponenterrordismissed: false
+    nexttasks:
+      '#none#':
+      - "6"
+    scriptarguments:
+      query:
+        simple: "%%XQL_HUNT_QUERY%%"
+      query_name:
+        simple: Retrospective_Intel_Hunt_Back_-_%%DATASET%%_%%LOOKBACK%%
+    separatecontext: false
+    continueonerror: true
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": -120,
+          "y": 260
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+  "5":
+    id: "5"
+    type: title
+    task:
+      version: -1
+      name: End
+      type: title
+      iscommand: false
+      brand: ""
+      playbooktaskmissingcomponent: null
+      istaskmissingcomponenterrordismissed: false
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": -120,
+          "y": 690
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+  "6":
+    id: "6"
+    type: regular
+    task:
+      version: -1
+      name: Close Investigation
+      description: commands.local.cmd.close.inv
+      script: Builtin|||closeInvestigation
+      type: regular
+      iscommand: true
+      brand: Builtin
+      playbooktaskmissingcomponent: null
+      istaskmissingcomponenterrordismissed: false
+    nexttasks:
+      '#none#':
+      - "5"
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": -120,
+          "y": 460
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+view: |-
+  {
+    "linkLabelsPosition": {},
+    "paper": {
+      "dimensions": {
+        "height": 690,
+        "width": 380,
+        "x": -120,
+        "y": 60
+      }
+    }
+  }
+inputs: []
+outputs: []
+adopted: true

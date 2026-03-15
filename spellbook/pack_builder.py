@@ -261,7 +261,7 @@ class PackBuilder:
                     check=True
                 )
             except subprocess.CalledProcessError as e:
-                click.echo(f"Warning: Could not initialise git repository: {e}")
+                click.echo(f"[WARN] Could not initialise git repository: {e}")
         
         cmd = ["demisto-sdk", "validate", "-i", str(pack_path)]
 

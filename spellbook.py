@@ -22,9 +22,10 @@ from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
 from spellbook.xsiam_validator import XSIAMValidator
 from spellbook.content_importer import CorrelationImporter
+from spellbook.template_renderer import TemplateRenderer, list_templates
 
 
-PINNED_SDK_VERSION = "1.38.18"
+PINNED_SDK_VERSION = "1.38.20"
 
 
 def get_version_info():
@@ -91,6 +92,19 @@ def check_environment(config_path: str, require_packs: bool = True) -> bool:
     return True
 
 
+def run_xsiam_validation(packs_dir: Path, pack_name: str) -> None:
+    """Run non-blocking XSIAM validation on a pack and display results.
+
+    Output uses grepable format. Does not block the calling operation.
+    """
+    xsiam_validator = XSIAMValidator(packs_dir)
+    issues = xsiam_validator.validate_pack(pack_name)
+    if issues:
+        click.echo("")
+        click.echo(xsiam_validator.format_issues(issues))
+        click.echo("")
+
+
 def validate_version_format(version: str) -> bool:
     """Check if version matches X.Y.Z format."""
     import re
@@ -141,6 +155,120 @@ def check_git_repository(command_name: str = "bump-version") -> bool:
         click.echo("  The --tag flag requires Git to be installed.")
         click.echo("")
         sys.exit(1)
+
+
+def create_release_notes(pack_name: str, version: str, pack_path: Path, message: str | None = None, tag: bool = False) -> Path:
+    """
+    Create a release notes file for a pack version.
+
+    When --tag and --message are both provided, the release notes file
+    contains the commit message as a simple changelog entry. Otherwise,
+    the file contains the full placeholder scaffold for manual editing.
+
+    Args:
+        pack_name: Name of the pack.
+        version: Version string (without 'v' prefix).
+        pack_path: Path to the pack directory.
+        message: Optional commit message to use as release notes content.
+        tag: Whether --tag was specified.
+
+    Returns:
+        Path to the release notes file.
+    """
+    release_notes_dir = pack_path / "ReleaseNotes"
+    release_notes_dir.mkdir(exist_ok=True)
+
+    version_filename = version.replace(".", "_") + ".md"
+    release_notes_path = release_notes_dir / version_filename
+
+    if not release_notes_path.exists():
+        if message and tag:
+            release_content = f"#### {pack_name}\n\n- {message}\n"
+            with open(release_notes_path, "w", encoding="utf-8") as f:
+                f.write(release_content)
+            click.echo(f"[OK] Created release notes: ReleaseNotes/{version_filename}")
+            click.echo("[INFO] Release notes populated from commit message")
+        else:
+            release_content = f"""#### Parsing Rules
+
+##### {pack_name} Parsing Rule
+
+- (Describe parsing rule changes here)
+
+#### Modeling Rules
+
+##### {pack_name} Modeling Rule
+
+- (Describe modelling rule changes here)
+
+#### Correlation Rules
+
+##### {pack_name} - (Rule Name)
+
+- (Describe correlation rule changes here)
+"""
+            with open(release_notes_path, "w", encoding="utf-8") as f:
+                f.write(release_content)
+            click.echo(f"[OK] Created release notes: ReleaseNotes/{version_filename}")
+            click.echo("")
+            click.echo("[INFO] Remember to update the release notes with your changes:")
+            click.echo(f"       {release_notes_path}")
+
+    return release_notes_path
+
+
+def update_version_history(pack_name: str, pack_path: Path, version: str, commit_message: str) -> None:
+    """
+    Insert a single new version entry into the version history in a pack README.md.
+
+    Adds the entry at the top of the existing history (newest first), preserving
+    all previous entries. Only called when --tag is used, so a commit message is
+    always available (user-supplied via -m or the default "PackName vX.Y.Z").
+
+    Skips with [INFO] if the README.md does not exist or does not contain the
+    version history markers. Skips with [WARN] if markers are in the wrong order.
+
+    Args:
+        pack_name: Name of the pack (for console output).
+        pack_path: Path to the pack directory.
+        version: Version string for the new entry (e.g. "1.2.3").
+        commit_message: The commit message to use as the version history entry.
+    """
+    readme_path = pack_path / "README.md"
+    if not readme_path.exists():
+        click.echo(f"[INFO] {pack_name}: README.md not found, skipping version history update")
+        return
+
+    readme_content = readme_path.read_text(encoding="utf-8")
+
+    start_marker = "<!-- spellbook:version-history:start -->"
+    end_marker = "<!-- spellbook:version-history:end -->"
+
+    if start_marker not in readme_content or end_marker not in readme_content:
+        click.echo(f"[INFO] {pack_name}: version history markers not found in README.md, skipping update")
+        return
+
+    start_idx = readme_content.index(start_marker) + len(start_marker)
+    end_idx = readme_content.index(end_marker)
+
+    if start_idx > end_idx:
+        click.echo(f"[WARN] {pack_name}: version history markers are in the wrong order in README.md, skipping update")
+        return
+
+    new_entry = f"### {version}\n\n- {commit_message}\n\n"
+
+    existing_history = readme_content[start_idx:end_idx]
+
+    new_content = (
+        readme_content[:start_idx]
+        + "\n"
+        + new_entry
+        + existing_history.lstrip("\n")
+        + readme_content[end_idx:]
+    )
+
+    readme_path.write_text(new_content, encoding="utf-8")
+    click.echo(f"[OK] Updated version history in {pack_name}/README.md")
 
 
 def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name: str = "bump-version", message: str | None = None) -> bool:
@@ -408,12 +536,17 @@ def build(pack_name, build_all, validate, config):
     builder = PackBuilder(config)
 
     if build_all:
+        if validate:
+            for pack in builder.discover_packs():
+                run_xsiam_validation(builder.packs_dir, pack)
         results = builder.build_all_packs(validate=validate)
         success = sum(1 for r in results.values() if r is not None)
         failed = len(results) - success
         click.echo(f"\nBuild complete: {success} succeeded, {failed} failed")
     elif pack_name:
         builder.validate_pack_exists(pack_name)
+        if validate:
+            run_xsiam_validation(builder.packs_dir, pack_name)
         result = builder.build_pack(pack_name, validate=validate)
         if result:
             click.echo(f"\nBuild successful: {result}")
@@ -622,9 +755,15 @@ def set_version(pack_name, new_version, tag, message, config):
     builder.validate_pack_exists(pack_name)
     builder.update_pack_version(pack_name, clean_version)
     click.echo(f"[OK] Set {pack_name} version to {clean_version}")
-    
+
+    pack_path = builder.packs_dir / pack_name
+    create_release_notes(pack_name, clean_version, pack_path, message, tag)
+
+    run_xsiam_validation(builder.packs_dir, pack_name)
+
     if tag:
-        pack_path = builder.packs_dir / pack_name
+        commit_message = message if message else f"{pack_name} v{clean_version}"
+        update_version_history(pack_name, pack_path, clean_version, commit_message)
         create_pack_tag(pack_name, clean_version, pack_path, "set-version", message)
 
 
@@ -726,39 +865,13 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
     click.echo(f"[OK] Bumped {pack_name} from {current_version} to {new_version}")
 
     pack_path = builder.packs_dir / pack_name
-    release_notes_dir = pack_path / "ReleaseNotes"
-    release_notes_dir.mkdir(exist_ok=True)
-    
-    version_filename = new_version.replace(".", "_") + ".md"
-    release_notes_path = release_notes_dir / version_filename
-    
-    if not release_notes_path.exists():
-        release_content = f"""#### Parsing Rules
+    create_release_notes(pack_name, new_version, pack_path, message, tag)
 
-##### {pack_name} Parsing Rule
-
-- (Describe parsing rule changes here)
-
-#### Modeling Rules
-
-##### {pack_name} Modeling Rule
-
-- (Describe modelling rule changes here)
-
-#### Correlation Rules
-
-##### {pack_name} - (Rule Name)
-
-- (Describe correlation rule changes here)
-"""
-        with open(release_notes_path, "w", encoding="utf-8") as f:
-            f.write(release_content)
-        click.echo(f"[OK] Created release notes: ReleaseNotes/{version_filename}")
-        click.echo("")
-        click.echo("[INFO] Remember to update the release notes with your changes:")
-        click.echo(f"       {release_notes_path}")
+    run_xsiam_validation(builder.packs_dir, pack_name)
 
     if tag:
+        commit_message = message if message else f"{pack_name} v{new_version}"
+        update_version_history(pack_name, pack_path, new_version, commit_message)
         create_pack_tag(pack_name, new_version, pack_path, "bump-version", message)
 
 
@@ -959,6 +1072,9 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
         except subprocess.CalledProcessError as e:
             click.echo(f"[WARN] Could not initialise git repository: {e}")
 
+    if not skip_validation:
+        run_xsiam_validation(input_file.parent, pack_name)
+
     cmd = ["demisto-sdk", "upload", "-i", str(input_file), "-z"]
 
     if xsiam:
@@ -1047,9 +1163,9 @@ def check_init(config):
             all_ok = False
         
         if builder.artifacts_dir.exists():
-            click.echo(f"[OK] Artifacts directory: {builder.artifacts_dir}")
+            click.echo(f"[OK] Artefacts directory: {builder.artifacts_dir}")
         else:
-            click.echo(f"[INFO] Artifacts directory: {builder.artifacts_dir} (will be created)")
+            click.echo(f"[INFO] Artefacts directory: {builder.artifacts_dir} (will be created)")
     
     try:
         git_check = subprocess.run(["git", "--version"], capture_output=True, text=True)
@@ -1141,20 +1257,23 @@ def check_init(config):
 
 @cli.group()
 def summon():
-    """Import content from Cortex Platform exports.
+    """Import and generate content for Cortex Platform packs.
 
-    Summon commands import content that has been exported from the
-    Cortex Platform and convert it to pack-ready YAML files.
+    Summon commands import content from Cortex Platform exports or
+    generate new content from templates.
 
     \b
-    Usage:
+    Import from exports:
         cat export.json | spellbook summon correlation MyPack
-        spellbook summon correlation MyPack < export.json
 
     \b
-    For Docker:
-        cat export.json | docker run -i --rm -v $(pwd):/content \\
-            ghcr.io/gocortexio/spellbook summon correlation MyPack
+    Generate from templates:
+        spellbook summon template intel_retrohunt MyPack \\
+            --set DATASET=microsoft_windows_raw --set LOOKBACK=30d
+
+    \b
+    List available templates:
+        spellbook summon template --list
     """
     pass
 
@@ -1236,6 +1355,174 @@ def summon_correlation(pack_name, config):
         failed = len(results) - success_count
         click.echo(f"[WARN] Summoned {success_count} rule(s), {failed} failed")
         sys.exit(1)
+
+
+@summon.command("template")
+@click.argument("template_name", required=False, default=None)
+@click.argument("pack_name", required=False, default=None)
+@click.option(
+    "--set",
+    "token_values",
+    multiple=True,
+    help="Set a token value (KEY=VALUE). Repeatable."
+)
+@click.option(
+    "--list", "list_mode",
+    is_flag=True,
+    default=False,
+    help="List available templates and their required tokens."
+)
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def summon_template(template_name, pack_name, token_values, list_mode, config):
+    """Generate content from a template.
+
+    Renders a template with the provided token values and writes the
+    result to the target pack. Templates can produce multiple content
+    types (Playbooks, Triggers, Jobs, etc.).
+
+    \b
+    Usage:
+        spellbook summon template intel_retrohunt MyPack \\
+            --set DATASET=microsoft_windows_raw \\
+            --set MATCH_FIELD=dest_ip \\
+            --set LOOKBACK=30d
+
+    \b
+    List available templates:
+        spellbook summon template --list
+
+    \b
+    Interactive mode (prompts for missing tokens):
+        spellbook summon template intel_retrohunt MyPack
+    """
+    click.echo(f"Spellbook v{__version__}")
+    click.echo("")
+
+    config_path = Path(config)
+    templates_dir = config_path.parent / "templates"
+
+    if list_mode:
+        if not templates_dir.is_dir():
+            click.echo("[INFO] No templates directory found")
+            click.echo("")
+            click.echo("  Templates are created during 'spellbook init'.")
+            click.echo("  You can also create a templates/ directory manually.")
+            click.echo("")
+            return
+
+        templates = list_templates(templates_dir)
+        if not templates:
+            click.echo("[INFO] No templates found")
+            return
+
+        click.echo("Available templates:")
+        click.echo("")
+        for tmpl in templates:
+            click.echo(f"  {tmpl['name']}")
+            if tmpl.get("content_types"):
+                click.echo(f"    Content types: {', '.join(tmpl['content_types'])}")
+            if tmpl["tokens"]:
+                click.echo("    Tokens:")
+                for token in tmpl["tokens"]:
+                    click.echo(f"      %%{token}%%")
+            else:
+                click.echo("    (no tokens required)")
+            click.echo("")
+        return
+
+    if not template_name:
+        click.echo("[ERROR] Template name is required")
+        click.echo("")
+        click.echo("  Usage: spellbook summon template <template> <pack> --set KEY=VALUE")
+        click.echo("  List:  spellbook summon template --list")
+        click.echo("")
+        sys.exit(1)
+
+    if not pack_name:
+        click.echo("[ERROR] Pack name is required")
+        click.echo("")
+        click.echo(f"  Usage: spellbook summon template {template_name} <pack> --set KEY=VALUE")
+        click.echo("")
+        sys.exit(1)
+
+    check_environment(config)
+    builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
+
+    if not templates_dir.is_dir():
+        click.echo("[ERROR] Templates directory not found")
+        click.echo("")
+        click.echo("  Expected: templates/")
+        click.echo("  Templates are created during 'spellbook init'.")
+        click.echo("")
+        sys.exit(1)
+
+    try:
+        renderer = TemplateRenderer(template_name, templates_dir)
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        click.echo("")
+        available = list_templates(templates_dir)
+        if available:
+            click.echo("  Available templates:")
+            for tmpl in available:
+                click.echo(f"    {tmpl['name']}")
+        click.echo("")
+        sys.exit(1)
+
+    values = {}
+    for item in token_values:
+        if "=" not in item:
+            click.echo(f"[ERROR] Invalid --set format: {item} (expected KEY=VALUE)")
+            sys.exit(1)
+        key, val = item.split("=", 1)
+        values[key.upper()] = val
+
+    try:
+        required_tokens = renderer.discover_tokens()
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+    missing = [t for t in required_tokens if t not in values]
+
+    if missing:
+        click.echo(f"Template: {template_name}")
+        click.echo("")
+        for token in missing:
+            prompt_text = f"  {token}"
+            value = click.prompt(prompt_text)
+            values[token] = value
+        click.echo("")
+
+    click.echo(f"Generating from template: {template_name}")
+    click.echo(f"Target pack: {pack_name}")
+    click.echo("")
+
+    for token in required_tokens:
+        click.echo(f"  {token} = {values[token]}")
+    click.echo("")
+
+    pack_path = builder.packs_dir / pack_name
+
+    try:
+        results = renderer.render(values, pack_path)
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+
+    for result in results:
+        if result.get("overwritten"):
+            click.echo(f"[WARN] Overwrote: {result['content_type']}/{result['filename']}")
+        else:
+            click.echo(f"[OK] Created: {result['content_type']}/{result['filename']}")
+
+    click.echo("")
+    click.echo(f"[OK] Generated {len(results)} artefact(s) from {template_name}")
 
 
 if __name__ == "__main__":

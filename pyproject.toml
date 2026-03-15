@@ -9,7 +9,7 @@ description = "A Python toolset for building, validating, and packaging Cortex P
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
-    "demisto-sdk==1.38.18",
+    "demisto-sdk==1.38.20",
     "gitpython>=3.1.46",
     "pyyaml>=6.0.3",
 ]

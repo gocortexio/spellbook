@@ -86,6 +86,8 @@ docker run --rm \
 | set-version | Set a specific version for a pack |
 | bump-version | Automatically increment pack version |
 | summon correlation | Import correlation rules from platform JSON export |
+| summon template | Generate content from templates with token substitution |
+| rename-content | Rename content items to match pack name (temporarily disabled) |
 
 ## Instance Structure
 

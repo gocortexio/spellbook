@@ -6,7 +6,7 @@
 
 FROM python:3.11-alpine
 
-ARG SPELLBOOK_VERSION=1.20.2
+ARG SPELLBOOK_VERSION=1.21.0
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
 LABEL version="${SPELLBOOK_VERSION}"
@@ -25,7 +25,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Install demisto-sdk (pinned version) and additional dependencies
-RUN pip install --no-cache-dir "demisto-sdk==1.38.18" "gitpython>=3.1.46" "pyyaml>=6.0.3"
+RUN pip install --no-cache-dir "demisto-sdk==1.38.20" "gitpython>=3.1.46" "pyyaml>=6.0.3"
 
 # Copy project files
 COPY spellbook/ ./spellbook/

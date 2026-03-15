@@ -30,7 +30,7 @@ cd gocortex-spellbook
 Using pip:
 
 ```bash
-pip install -r requirements.txt
+pip install "demisto-sdk==1.38.20" "gitpython>=3.1.46" "pyyaml>=6.0.3"
 ```
 
 Or using uv:
@@ -257,9 +257,12 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Validate all | python spellbook.py validate-all -c my-content/spellbook.yaml |
 | Build pack | python spellbook.py build PackName -c my-content/spellbook.yaml |
 | Build all | python spellbook.py build --all -c my-content/spellbook.yaml |
+| Build without validation | python spellbook.py build --all --no-validate -c my-content/spellbook.yaml |
 | Show version | python spellbook.py version PackName -c my-content/spellbook.yaml |
 | Set version | python spellbook.py set-version PackName X.Y.Z -c my-content/spellbook.yaml |
 | Bump version | python spellbook.py bump-version PackName -c my-content/spellbook.yaml |
 | Bump and tag | python spellbook.py bump-version PackName --tag -c my-content/spellbook.yaml |
 | Bump with message | python spellbook.py bump-version PackName --tag -m "Closes #123" -c my-content/spellbook.yaml |
 | Import correlations | cat rules.json \| python spellbook.py summon correlation PackName -c my-content/spellbook.yaml |
+| Generate from template | python spellbook.py summon template intel_retrohunt PackName --set KEY=VALUE -c my-content/spellbook.yaml |
+| List templates | python spellbook.py summon template --list -c my-content/spellbook.yaml |
