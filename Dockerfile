@@ -6,7 +6,7 @@
 
 FROM python:3.11-alpine
 
-ARG SPELLBOOK_VERSION=1.21.0
+ARG SPELLBOOK_VERSION=1.22.0
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
 LABEL version="${SPELLBOOK_VERSION}"

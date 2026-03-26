@@ -2712,7 +2712,7 @@ size = 14873
 
 [[distribution]]
 name = "gocortex-spellbook"
-version = "1.21.0"
+version = "1.22.0"
 source = "directory+file:///home/runner/workspace"
 
 [distribution.sdist]

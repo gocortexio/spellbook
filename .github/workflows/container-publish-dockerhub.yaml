@@ -1,6 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
+#
 # Build and Push Container Image to Docker Hub
 # Triggers on version tag pushes (e.g., v1.2.73)
 # Image tags: full version (1.2.73) and latest only
+# Pre-release tags (e.g., v1.2.73-beta.1) publish numbered version only, not latest
 # Requires DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets in repository settings
 
 name: Build and Push to Docker Hub
@@ -42,9 +46,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=${{ !contains(github.ref, '-') }}
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
         id: push
@@ -57,3 +62,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+

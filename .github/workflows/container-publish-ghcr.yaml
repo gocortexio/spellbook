@@ -1,6 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: GoCortexIO
+#
 # Build and Push Container Image to GitHub Container Registry
 # Triggers on version tag pushes (e.g., v1.2.72)
 # Image tags align with release versions (e.g., v1.2.72 -> 1.2.72, 1.2, latest)
+# Pre-release tags (e.g., v1.2.72-beta.1) publish numbered version only, not latest
 
 name: Build and Push to GHCR
 
@@ -44,11 +48,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=${{ !contains(github.ref, '-') }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
         id: push
@@ -68,3 +73,4 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
