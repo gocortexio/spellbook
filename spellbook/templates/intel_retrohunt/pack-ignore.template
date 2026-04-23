@@ -1,0 +1,5 @@
+[file:Retrospective_Intel_Hunt_Back_%%DATASET%%_%%LOOKBACK%%.yml]
+ignore=BA101
+
+[file:job-Retrospective_Intel_Hunt_Back_%%DATASET%%_%%LOOKBACK%%.json]
+ignore=BA101

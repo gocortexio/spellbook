@@ -138,7 +138,7 @@ class PackTemplate:
             "keywords": self.defaults.get("keywords", []),
             "marketplaces": self.defaults.get(
                 "marketplaces",
-                ["xsoar", "marketplacev2"]
+                ["xsoar", "marketplacev2", "platform"]
             ),
             "githubUser": []
         }

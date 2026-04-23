@@ -8,9 +8,12 @@ Command-line interface for building, validating, and packaging
 Cortex Platform content packs.
 """
 
+import hashlib
 import os
+import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import click
@@ -22,10 +25,16 @@ from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
 from spellbook.xsiam_validator import XSIAMValidator
 from spellbook.content_importer import CorrelationImporter
-from spellbook.template_renderer import TemplateRenderer, list_templates
+from spellbook.template_renderer import (
+    TemplateRenderer,
+    list_templates,
+)
 
 
-PINNED_SDK_VERSION = "1.38.20"
+TASK_UUID_PATTERN = re.compile(r"^TASK_UUID_\d+$")
+
+
+PINNED_SDK_VERSION = "1.38.23"
 
 
 def get_version_info():
@@ -928,11 +937,19 @@ def rename_content(pack_name, config):
 @cli.command()
 @click.argument("pack_path")
 @click.option(
+    "--platform",
+    "-p",
+    "platform",
+    is_flag=True,
+    default=False,
+    help="Upload to a Cortex Platform tenant (recommended). Required for content types that the legacy XSIAM marketplace excludes, including Jobs."
+)
+@click.option(
     "--xsiam",
     "-x",
     is_flag=True,
     default=False,
-    help="Upload to XSIAM server."
+    help="Upload to XSIAM server (legacy). Note: the XSIAM marketplace silently drops Jobs and other Platform-only content types; prefer --platform."
 )
 @click.option(
     "--insecure",
@@ -952,7 +969,7 @@ def rename_content(pack_name, config):
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def upload(pack_path, xsiam, insecure, skip_validation, config):
+def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
     """Upload a content pack to Cortex Platform.
 
     PACK_PATH must be a pack directory (e.g., Packs/MyPack).
@@ -961,17 +978,24 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
       DEMISTO_BASE_URL - Your instance URL
       DEMISTO_API_KEY  - API key with Instance Administrator role
 
-    For XSIAM, also set:
+    For Cortex Platform or XSIAM, also set:
       XSIAM_AUTH_ID    - Authentication ID from your instance
     """
+    if xsiam and platform:
+        click.echo("[ERROR] --xsiam and --platform are mutually exclusive")
+        click.echo("        Pick one: --platform (recommended for Cortex Platform tenants) or --xsiam (legacy).")
+        sys.exit(1)
+
     base_url = os.environ.get("DEMISTO_BASE_URL")
     api_key = os.environ.get("DEMISTO_API_KEY")
     xsiam_auth_id = os.environ.get("XSIAM_AUTH_ID")
 
+    auth_id_required = bool(platform or xsiam)
+
     env_vars = [
         ("DEMISTO_BASE_URL", base_url, True),
         ("DEMISTO_API_KEY", api_key, True),
-        ("XSIAM_AUTH_ID", xsiam_auth_id, xsiam),
+        ("XSIAM_AUTH_ID", xsiam_auth_id, auth_id_required),
     ]
     
     missing = []
@@ -989,12 +1013,18 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
             if not required:
                 continue
             status = "[OK] set" if value else "[MISSING]"
-            suffix = " (required with --xsiam)" if name == "XSIAM_AUTH_ID" else ""
+            suffix = " (required with --platform or --xsiam)" if name == "XSIAM_AUTH_ID" else ""
             click.echo(f"  {name:<18} {status}{suffix}")
         click.echo("")
         click.echo("Example Docker command:")
         click.echo("")
-        if xsiam:
+        if platform:
+            click.echo('  docker run --rm -v $(pwd):/content \\')
+            click.echo('    -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \\')
+            click.echo('    -e DEMISTO_API_KEY="your-api-key" \\')
+            click.echo('    -e XSIAM_AUTH_ID="your-auth-id" \\')
+            click.echo('    ghcr.io/gocortexio/spellbook upload Packs/MyPack --platform')
+        elif xsiam:
             click.echo('  docker run --rm -v $(pwd):/content \\')
             click.echo('    -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \\')
             click.echo('    -e DEMISTO_API_KEY="your-api-key" \\')
@@ -1021,7 +1051,7 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
     if not input_file.is_dir():
         click.echo(f"[ERROR] Pack path must be a directory: {pack_path}")
         click.echo("")
-        click.echo("Usage: upload Packs/MyPack --xsiam")
+        click.echo("Usage: upload Packs/MyPack --platform")
         click.echo("")
         click.echo("Note: Upload from pre-built zip files is not supported.")
         click.echo("Always upload from the pack directory.")
@@ -1077,7 +1107,9 @@ def upload(pack_path, xsiam, insecure, skip_validation, config):
 
     cmd = ["demisto-sdk", "upload", "-i", str(input_file), "-z"]
 
-    if xsiam:
+    if platform:
+        cmd.extend(["--marketplace", "platform"])
+    elif xsiam:
         cmd.append("--xsiam")
 
     if insecure:
@@ -1475,20 +1507,31 @@ def summon_template(template_name, pack_name, token_values, list_mode, config):
         click.echo("")
         sys.exit(1)
 
+    try:
+        user_tokens = renderer.discover_tokens()
+        auto_tokens = renderer.discover_auto_tokens()
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+
+    auto_token_set = set(auto_tokens)
+
     values = {}
     for item in token_values:
         if "=" not in item:
             click.echo(f"[ERROR] Invalid --set format: {item} (expected KEY=VALUE)")
             sys.exit(1)
         key, val = item.split("=", 1)
-        values[key.upper()] = val
+        key = key.upper()
+        if key in auto_token_set:
+            click.echo(
+                f"[ERROR] Cannot --set auto-derived token: {key} "
+                f"(filled in automatically; use @@ sigil in templates)"
+            )
+            sys.exit(1)
+        values[key] = val
 
-    try:
-        required_tokens = renderer.discover_tokens()
-    except ValueError as e:
-        click.echo(f"[ERROR] {e}")
-        sys.exit(1)
-    missing = [t for t in required_tokens if t not in values]
+    missing = [t for t in user_tokens if t not in values]
 
     if missing:
         click.echo(f"Template: {template_name}")
@@ -1499,12 +1542,33 @@ def summon_template(template_name, pack_name, token_values, list_mode, config):
             values[token] = value
         click.echo("")
 
+    if "TEMPLATE_HASH" in auto_token_set:
+        author = builder.config.get("author", "")
+        dataset = values.get("DATASET", "")
+        lookback = values.get("LOOKBACK", "")
+        hash_input = f"{author}:{dataset}:{lookback}"
+        values["TEMPLATE_HASH"] = hashlib.sha1(
+            hash_input.encode("utf-8")
+        ).hexdigest()[:8]
+
+    template_hash = values.get("TEMPLATE_HASH", "")
+    for token in auto_tokens:
+        if TASK_UUID_PATTERN.match(token) and token not in values:
+            task_index = token[len("TASK_UUID_"):]
+            uuid_seed = f"{template_hash}:{task_index}"
+            values[token] = str(
+                uuid.uuid5(uuid.NAMESPACE_OID, uuid_seed)
+            )
+
     click.echo(f"Generating from template: {template_name}")
     click.echo(f"Target pack: {pack_name}")
     click.echo("")
 
-    for token in required_tokens:
+    for token in user_tokens:
         click.echo(f"  {token} = {values[token]}")
+    for token in auto_tokens:
+        if token in values:
+            click.echo(f"  {token} = {values[token]}")
     click.echo("")
 
     pack_path = builder.packs_dir / pack_name

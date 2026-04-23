@@ -30,7 +30,7 @@ cd gocortex-spellbook
 Using pip:
 
 ```bash
-pip install "demisto-sdk==1.38.20" "gitpython>=3.1.46" "pyyaml>=6.0.3"
+pip install "demisto-sdk==1.38.23" "gitpython>=3.1.46" "pyyaml>=6.0.3"
 ```
 
 Or using uv:
@@ -176,14 +176,18 @@ export XSIAM_AUTH_ID="your-auth-id"
 Then upload:
 
 ```bash
-# Upload to XSIAM
-python spellbook.py upload my-content/Packs/MyNewPack --xsiam
+# Upload to Cortex Platform
+python spellbook.py upload my-content/Packs/MyNewPack --platform
 
-# Upload to XSOAR (no XSIAM_AUTH_ID or --xsiam flag needed)
+# Upload to XSOAR (no XSIAM_AUTH_ID or --platform flag needed)
 python spellbook.py upload my-content/Packs/MyNewPack
 
 # Upload with insecure connection (skip certificate validation)
-python spellbook.py upload my-content/Packs/MyNewPack --xsiam --insecure
+python spellbook.py upload my-content/Packs/MyNewPack --platform --insecure
+
+# Legacy XSIAM upload (use only for tenants not yet on Cortex Platform;
+# silently drops Jobs and other Platform-only content types)
+python spellbook.py upload my-content/Packs/MyNewPack --xsiam
 ```
 
 ---

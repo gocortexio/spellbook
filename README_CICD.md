@@ -205,7 +205,7 @@ The upload command requires credentials to authenticate with your Cortex instanc
 
 - DEMISTO_BASE_URL - Your Cortex Platform instance URL
 - DEMISTO_API_KEY - API key with Instance Administrator role
-- XSIAM_AUTH_ID - Authentication ID (required for XSIAM only)
+- XSIAM_AUTH_ID - Authentication ID (required for Cortex Platform and XSIAM)
 
 ### Upload Examples
 
@@ -220,7 +220,7 @@ docker run --rm \
   ghcr.io/gocortexio/spellbook upload Packs/SamplePack
 ```
 
-Upload to XSIAM (requires auth ID and --xsiam flag):
+Upload to Cortex Platform (requires auth ID and --platform flag):
 
 ```bash
 docker run --rm \
@@ -229,7 +229,7 @@ docker run --rm \
   -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
   -e DEMISTO_API_KEY="your-api-key" \
   -e XSIAM_AUTH_ID="your-auth-id" \
-  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --platform
 ```
 
 Upload with insecure connection (skip certificate validation):
@@ -241,7 +241,7 @@ docker run --rm \
   -e DEMISTO_BASE_URL="https://your-instance.xdr.paloaltonetworks.com" \
   -e DEMISTO_API_KEY="your-api-key" \
   -e XSIAM_AUTH_ID="your-auth-id" \
-  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam --insecure
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --platform --insecure
 ```
 
 ### Using an Environment File
@@ -262,14 +262,15 @@ docker run --rm \
   -v $(pwd):/content \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   --env-file .env \
-  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --xsiam
+  ghcr.io/gocortexio/spellbook upload Packs/SamplePack --platform
 ```
 
 The .env file is included in .gitignore by default to prevent accidental commits of credentials.
 
 ### Upload Options
 
-- --xsiam - Upload to XSIAM (requires XSIAM_AUTH_ID)
+- --platform - Upload to a Cortex Platform tenant (recommended; requires XSIAM_AUTH_ID)
+- --xsiam - Legacy XSIAM upload flag (requires XSIAM_AUTH_ID). Note: silently drops Jobs and other Platform-only content types; prefer --platform.
 - --insecure - Skip SSL certificate verification
 - --skip-validation - Skip pack validation before upload
 

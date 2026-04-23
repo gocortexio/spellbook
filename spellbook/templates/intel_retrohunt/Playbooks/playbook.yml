@@ -1,12 +1,16 @@
+id: gocortex-retrohunt-%%DATASET%%-%%LOOKBACK%%-@@TEMPLATE_HASH@@
 version: 1
 vcShouldKeepItemLegacyProdMachine: false
-name: Retrospective Intel Hunt Back %%DATASET%%
+fromversion: 6.8.0
+name: Retrospective Intel Hunt Back %%DATASET%% %%LOOKBACK%%
 starttaskid: "0"
 tasks:
   "0":
     id: "0"
+    taskid: "@@TASK_UUID_0@@"
     type: start
     task:
+      id: "@@TASK_UUID_0@@"
       version: -1
       name: ""
       iscommand: false
@@ -34,8 +38,10 @@ tasks:
     isautoswitchedtoquietmode: false
   "1":
     id: "1"
+    taskid: "@@TASK_UUID_1@@"
     type: regular
     task:
+      id: "@@TASK_UUID_1@@"
       version: -1
       name: Retrospective Intel Hunt Back - %%DATASET%% (%%LOOKBACK%%)
       description: |-
@@ -75,8 +81,10 @@ tasks:
     isautoswitchedtoquietmode: false
   "5":
     id: "5"
+    taskid: "@@TASK_UUID_5@@"
     type: title
     task:
+      id: "@@TASK_UUID_5@@"
       version: -1
       name: End
       type: title
@@ -102,8 +110,10 @@ tasks:
     isautoswitchedtoquietmode: false
   "6":
     id: "6"
+    taskid: "@@TASK_UUID_6@@"
     type: regular
     task:
+      id: "@@TASK_UUID_6@@"
       version: -1
       name: Close Investigation
       description: commands.local.cmd.close.inv

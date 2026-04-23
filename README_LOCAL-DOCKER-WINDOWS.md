@@ -198,7 +198,7 @@ $env:DEMISTO_API_KEY="your-api-key"
 $env:XSIAM_AUTH_ID="your-auth-id"
 ```
 
-Then upload to XSIAM:
+Then upload to Cortex Platform:
 
 ```powershell
 docker run --rm `
@@ -207,10 +207,10 @@ docker run --rm `
   -e DEMISTO_BASE_URL `
   -e DEMISTO_API_KEY `
   -e XSIAM_AUTH_ID `
-  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --xsiam
+  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --platform
 ```
 
-Upload to XSOAR (no XSIAM_AUTH_ID or --xsiam flag needed):
+Upload to XSOAR (no XSIAM_AUTH_ID or --platform flag needed):
 
 ```powershell
 docker run --rm `
@@ -229,7 +229,7 @@ set DEMISTO_API_KEY=your-api-key
 set XSIAM_AUTH_ID=your-auth-id
 ```
 
-Then upload to XSIAM:
+Then upload to Cortex Platform:
 
 ```cmd
 docker run --rm ^
@@ -238,6 +238,34 @@ docker run --rm ^
   -e DEMISTO_BASE_URL ^
   -e DEMISTO_API_KEY ^
   -e XSIAM_AUTH_ID ^
+  ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --platform
+```
+
+### Existing packs
+
+If you have packs created with an earlier Spellbook version, their `pack_metadata.json` `marketplaces` array may not include `"platform"`. Open each pack's `pack_metadata.json` and ensure the array reads:
+
+```json
+"marketplaces": [
+  "xsoar",
+  "marketplacev2",
+  "platform"
+]
+```
+
+Without `"platform"` in this array, demisto-sdk will skip every content item in the pack during a `--platform` upload.
+
+### Legacy XSIAM upload
+
+The older `--xsiam` flag is still accepted for tenants that have not yet migrated to the unified Cortex Platform. It maps to demisto-sdk's `--marketplace marketplacev2` and silently drops Jobs and any other content type whose parser does not list `MarketplaceV2` as supported. Prefer `--platform` whenever possible:
+
+```powershell
+docker run --rm `
+  -v ${PWD}:/content `
+  -v $env:USERPROFILE\.gitconfig:/home/spellbook/.gitconfig:ro `
+  -e DEMISTO_BASE_URL `
+  -e DEMISTO_API_KEY `
+  -e XSIAM_AUTH_ID `
   ghcr.io/gocortexio/spellbook upload Packs/MyNewPack --xsiam
 ```
 
@@ -414,8 +442,9 @@ Replace `<command>` with any of the following:
 | Build all | build --all |
 | Build without validation | build --all --no-validate |
 | Upload pack | upload Packs/PackName |
-| Upload to XSIAM | upload Packs/PackName --xsiam |
-| Upload without validation | upload Packs/PackName --xsiam --skip-validation |
+| Upload to Cortex Platform | upload Packs/PackName --platform |
+| Upload to XSIAM (legacy) | upload Packs/PackName --xsiam |
+| Upload without validation | upload Packs/PackName --platform --skip-validation |
 | Show version | version PackName |
 | Set version | set-version PackName X.Y.Z |
 | Bump version | bump-version PackName |

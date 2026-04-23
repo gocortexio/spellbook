@@ -4,11 +4,19 @@
 Template Renderer Module
 
 Renders content pack artefacts from self-describing template files.
-Templates declare their own placeholder tokens (%%TOKEN%%), and the
-renderer discovers them at runtime. Template subfolders map 1:1 to
-content type directories in a pack (Playbooks/, Triggers/, Jobs/, etc.).
+Templates declare their own placeholder tokens, using two sigils:
+
+  %%TOKEN%%   user-supplied tokens (via --set or interactive prompts)
+  @@TOKEN@@   auto-derived tokens filled in by the renderer itself
+              (e.g. TEMPLATE_HASH, TASK_UUID_<n>)
+
+The sigil alone determines whether a token is user-supplied or
+auto-derived; no Python allow-list is consulted. Template subfolders
+map 1:1 to content type directories in a pack (Playbooks/, Triggers/,
+Jobs/, etc.).
 """
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -18,8 +26,13 @@ import yaml
 
 
 BUILTIN_TEMPLATES_DIR = Path(__file__).parent / "templates"
-TOKEN_PATTERN = re.compile(r"%%([A-Z_]+)%%")
+TOKEN_PATTERN = re.compile(r"%%([A-Z_][A-Z0-9_]*)%%")
+AUTO_TOKEN_PATTERN = re.compile(r"@@([A-Z_][A-Z0-9_]*)@@")
 REPLACEMENT_CHAR = "?"
+JUNK_FILES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+PACK_IGNORE_TEMPLATE_NAME = "pack-ignore.template"
+PACK_IGNORE_FILE = ".pack-ignore"
 
 CONTENT_TYPE_DIRS = {
     "Playbooks",
@@ -40,6 +53,15 @@ CONTENT_TYPE_DIRS = {
 }
 
 XQL_EXTENSION = ".xql"
+
+# Content types that demisto-sdk only recognises when the output filename
+# carries a specific prefix. Source of truth: demisto-sdk's filename regex
+# map in demisto_sdk/commands/common/constants.py — e.g. JOB_JSON_REGEX is
+# r"{JOBS_DIR_REGEX}\/job-([^/]+)\.json", so a Job whose file is not named
+# job-<something>.json is silently skipped by the uploader. Other content
+# types we currently ship (Playbooks, Triggers, ModelingRules, etc.) use
+# permissive regexes and need no prefix here.
+CONTENT_TYPE_FILENAME_PREFIXES = {"Jobs": "job-"}
 
 
 def _format_encoding_error(
@@ -92,19 +114,37 @@ class TemplateRenderer:
     def discover_tokens(self) -> list[str]:
         """Scan all template files and return user-facing token names.
 
-        Tokens derived from .xql filenames are internal and excluded
-        from the returned list.
+        Only the %% sigil is scanned; @@ auto-tokens are excluded
+        structurally. Tokens derived from .xql filenames are internal
+        and excluded from the returned list.
         """
         tokens = set()
         xql_tokens = self._discover_xql_tokens()
         for path in self.template_dir.rglob("*"):
-            if path.is_file():
+            if path.is_file() and path.name not in JUNK_FILES:
                 try:
                     content = path.read_text(encoding="utf-8")
                 except UnicodeDecodeError:
                     continue
                 tokens.update(TOKEN_PATTERN.findall(content))
         return sorted(tokens - xql_tokens)
+
+    def discover_auto_tokens(self) -> list[str]:
+        """Scan all template files and return auto-derived token names.
+
+        Only the @@ sigil is scanned. These tokens are filled in by
+        the caller (e.g. ``summon_template``) and must never be
+        supplied by the user via ``--set``.
+        """
+        tokens = set()
+        for path in self.template_dir.rglob("*"):
+            if path.is_file() and path.name not in JUNK_FILES:
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+                tokens.update(AUTO_TOKEN_PATTERN.findall(content))
+        return sorted(tokens)
 
     def _discover_xql_tokens(self) -> set[str]:
         """Return the set of internal token names derived from .xql filenames."""
@@ -132,6 +172,7 @@ class TemplateRenderer:
             List of result dicts with file paths and status.
         """
         missing = [t for t in self.discover_tokens() if t not in values]
+        missing += [t for t in self.discover_auto_tokens() if t not in values]
         if missing:
             raise ValueError(
                 f"Missing token(s): {', '.join(missing)}"
@@ -150,7 +191,55 @@ class TemplateRenderer:
             )
             results.extend(type_results)
 
+        self._apply_pack_ignore_fragment(values, pack_dir)
+
         return results
+
+    def _apply_pack_ignore_fragment(
+        self, values: dict[str, str], pack_dir: Path
+    ) -> None:
+        """Merge an optional pack-ignore fragment into the pack's .pack-ignore.
+
+        If the template root contains a ``pack-ignore.template`` file, its
+        contents are token-rendered and appended to the destination pack's
+        ``.pack-ignore``. Stanzas that already exist verbatim are skipped so
+        re-running summon stays byte-identical.
+        """
+        fragment_path = self.template_dir / PACK_IGNORE_TEMPLATE_NAME
+        if not fragment_path.is_file():
+            return
+
+        try:
+            raw = fragment_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError(
+                _format_encoding_error(
+                    fragment_path, self.template_name, "(root)", e
+                )
+            ) from None
+
+        rendered = self._replace_tokens(raw, values).strip()
+        if not rendered:
+            return
+
+        target = pack_dir / PACK_IGNORE_FILE
+        existing = target.read_text(encoding="utf-8") if target.exists() else ""
+
+        new_blocks = []
+        for block in re.split(r"\n\s*\n", rendered):
+            block = block.strip()
+            if block and block not in existing:
+                new_blocks.append(block)
+
+        if not new_blocks:
+            return
+
+        suffix = "\n\n".join(new_blocks) + "\n"
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        if existing and not existing.endswith("\n\n"):
+            existing += "\n"
+        target.write_text(existing + suffix, encoding="utf-8")
 
     def _render_content_type(
         self,
@@ -181,6 +270,8 @@ class TemplateRenderer:
             if not template_file.is_file():
                 continue
             if template_file.suffix == XQL_EXTENSION:
+                continue
+            if template_file.name in JUNK_FILES:
                 continue
 
             result = self._render_file(
@@ -225,12 +316,27 @@ class TemplateRenderer:
             output_content = self._to_yaml(data)
         elif template_file.suffix == ".json":
             output_content = self._replace_tokens(raw_content, values)
-            filename = self._replace_tokens(template_file.name, values)
-            name = template_file.stem
+            try:
+                data = json.loads(output_content)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"File '{template_file.name}' in "
+                    f"'{self.template_name}/{content_type}' is not valid JSON: {e}"
+                ) from None
+            if isinstance(data, dict) and isinstance(data.get("name"), str):
+                name = data["name"]
+                filename = self._generate_filename(name, template_file.suffix)
+            else:
+                filename = self._replace_tokens(template_file.name, values)
+                name = template_file.stem
         else:
             output_content = self._replace_tokens(raw_content, values)
             filename = self._replace_tokens(template_file.name, values)
             name = template_file.stem
+
+        prefix = CONTENT_TYPE_FILENAME_PREFIXES.get(content_type)
+        if prefix and not filename.startswith(prefix):
+            filename = prefix + filename
 
         output_dir = pack_dir / content_type
         output_dir.mkdir(exist_ok=True)
@@ -248,24 +354,31 @@ class TemplateRenderer:
         }
 
     def _replace_tokens(self, text: str, values: dict[str, str]) -> str:
-        """Replace %%TOKEN%% placeholders in a string.
+        """Replace %%TOKEN%% and @@TOKEN@@ placeholders in a string.
 
-        XQL tokens (derived from .xql filenames) are left intact here;
-        they are resolved separately by _insert_xql_token after YAML
-        parsing.
+        Both sigils are resolved from the same ``values`` dict; only the
+        spelling in the source template differs. XQL tokens (derived
+        from .xql filenames, always %%) are left intact here; they are
+        resolved separately by _insert_xql_token after YAML parsing.
         """
         xql_tokens = self._discover_xql_tokens()
 
-        def replacer(match):
+        def user_replacer(match):
             token = match.group(1)
             if token in xql_tokens:
                 return match.group(0)
             return values.get(token, match.group(0))
 
-        return TOKEN_PATTERN.sub(replacer, text)
+        def auto_replacer(match):
+            token = match.group(1)
+            return values.get(token, match.group(0))
+
+        text = TOKEN_PATTERN.sub(user_replacer, text)
+        text = AUTO_TOKEN_PATTERN.sub(auto_replacer, text)
+        return text
 
     def _replace_tokens_in_dict(self, data: Any, values: dict[str, str]) -> None:
-        """Recursively replace %%TOKEN%% placeholders in a dict structure."""
+        """Recursively replace placeholder tokens in a dict structure."""
         if isinstance(data, dict):
             for key in list(data.keys()):
                 val = data[key]

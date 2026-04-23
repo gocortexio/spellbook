@@ -314,7 +314,7 @@ create_release:
                 "tags": [],
                 "useCases": [],
                 "keywords": [],
-                "marketplaces": ["xsoar", "marketplacev2"]
+                "marketplaces": ["xsoar", "marketplacev2", "platform"]
             },
             "exclude_packs": [],
             "validation": {
@@ -486,7 +486,7 @@ docker run --rm -v $(pwd):/content \\
   -e DEMISTO_BASE_URL \\
   -e DEMISTO_API_KEY \\
   -e XSIAM_AUTH_ID \\
-  ghcr.io/gocortexio/spellbook:latest upload Packs/SamplePack --xsiam
+  ghcr.io/gocortexio/spellbook:latest upload Packs/SamplePack --platform
 ```
 
 ## References
@@ -515,7 +515,7 @@ docker run --rm -v $(pwd):/content \\
             "tags": [],
             "useCases": [],
             "keywords": [],
-            "marketplaces": ["xsoar", "marketplacev2"]
+            "marketplaces": ["xsoar", "marketplacev2", "platform"]
         }
 
         pack_path = template.create_pack(
