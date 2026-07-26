@@ -120,9 +120,18 @@ docker run --rm ^
   ghcr.io/gocortexio/spellbook create MyNewPack --description "My new content pack"
 ```
 
+Options: `--author "Name"` sets the pack author (otherwise the `spellbook.yaml`
+default is used); `--template default|integration|playbook|minimal` selects the
+scaffolded content directories; `--no-author-image` skips the placeholder author
+image. By default `create` writes a placeholder `Author_image.png` (the
+GoCortexIO wordmark) at the pack root, which you can replace with your own
+branding.
+
 ---
 
 ## Validate
+
+Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff using the official demisto/content store ruleset.
 
 ### PowerShell
 
@@ -183,6 +192,11 @@ docker run --rm ^
   -v %USERPROFILE%\.gitconfig:/home/spellbook/.gitconfig:ro ^
   ghcr.io/gocortexio/spellbook build --all
 ```
+
+If no packs are discovered, `build --all` and `validate-all` exit with a
+grepable `[ERROR]` rather than reporting success, so a missing volume mount in
+CI cannot produce a green pipeline and an empty release. SamplePack is excluded
+from discovery; build it directly by name.
 
 ---
 
@@ -454,6 +468,7 @@ Replace `<command>` with any of the following:
 | Bump and tag | bump-version PackName --tag |
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
 | Import correlations | summon correlation PackName (with stdin) |
+| Import data model rule | summon datamodel PackName (with stdin) |
 | Generate from template | summon template intel_retrohunt PackName --set KEY=VALUE |
 | List templates | summon template --list |
 
@@ -499,6 +514,33 @@ The command:
 - Removes platform-specific fields (rule_id, simple_schedule, etc.)
 - Adds required fields (global_rule_id, fromversion)
 - Creates YAML files in Packs/MyPack/CorrelationRules/
+
+### Importing a Data Model Rule
+
+Copy a data model (XDM) rule from the tenant rule editor, including its
+`[MODEL: dataset="..."]` header, then pipe the XIF to the summon command.
+
+#### PowerShell
+
+```powershell
+Get-Content rule.xif | docker run -i --rm `
+  -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
+#### Command Prompt
+
+```cmd
+type rule.xif | docker run -i --rm ^
+  -v %cd%:/content ^
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
+The command writes the three-file modelling rule package (`.yml`, `.xif`,
+`_schema.json`) into `Packs/MyPack/ModelingRules/`, named after the dataset by
+default. Use `--name "Base Name"` to override the name, or `--minimal-schema` to
+write only `_raw_log` instead of inferring columns. Review the inferred column
+types before uploading.
 
 ---
 

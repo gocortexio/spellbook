@@ -13,6 +13,45 @@ from pathlib import Path
 
 from dataclasses import dataclass
 
+import yaml
+
+from .xdm_fields import scan_unmappable_fields
+
+
+# Content directories whose files must be named `<PackFolder>_<something>`
+# with an allowed suffix. Mirrors XSIAM_DEPTH_1_CHECKS in demisto-sdk's
+# scripts/validate_content_path.py. That rule is enforced by the official
+# store pipeline through the `validate-content-path` pre-commit hook, not by
+# `demisto-sdk validate`, so it is checked here instead.
+XSIAM_DEPTH_ONE_PREFIX_DIRS = {
+    "CorrelationRules": {".yml"},
+    "XSIAMDashboards": {".json", ".png"},
+    "XSIAMReports": {".json", ".png"},
+}
+
+# Content directories whose YAML items have a demisto-sdk strict model.
+# Maps the directory to its model module, model name, and whether the items
+# sit in package subdirectories. `demisto-sdk validate` does not enforce
+# these models in practice (a rule missing a required field, or carrying a
+# field the model forbids, passes), so they are applied here.
+STRICT_MODEL_SOURCES = {
+    "CorrelationRules": (
+        "demisto_sdk.commands.content_graph.strict_objects.correlation_rule",
+        "StrictCorrelationRule",
+        False,
+    ),
+    "ModelingRules": (
+        "demisto_sdk.commands.content_graph.strict_objects.modeling_rule",
+        "StrictModelingRule",
+        True,
+    ),
+    "ParsingRules": (
+        "demisto_sdk.commands.content_graph.strict_objects.parsing_rule",
+        "StrictParsingRule",
+        True,
+    ),
+}
+
 
 @dataclass
 class ValidationIssue:
@@ -121,7 +160,214 @@ class XSIAMValidator:
         # Check filenames for problematic characters
         filename_issues = self._check_filenames(pack_path)
         issues.extend(filename_issues)
-        
+
+        issues.extend(self._check_unmappable_xdm_fields(pack_path))
+
+        issues.extend(self._check_depth_one_filenames(pack_path))
+
+        issues.extend(self._check_strict_schemas(pack_path))
+
+        return issues
+
+    def _check_depth_one_filenames(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check that XSIAM depth-one items are named `<PackFolder>_...`.
+
+        The official store pipeline rejects a correlation rule, XSIAM
+        dashboard, or XSIAM report whose filename stem does not begin with the
+        pack folder name followed by an underscore, or whose suffix is not one
+        the content type allows. Reported as a warning: the item still
+        installs on a tenant, but store submission would be rejected.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        issues = []
+        pack_name = pack_path.name
+
+        for content_type, allowed_suffixes in XSIAM_DEPTH_ONE_PREFIX_DIRS.items():
+            content_dir = pack_path / content_type
+            if not content_dir.exists():
+                continue
+
+            # The rule applies to files directly inside the content folder.
+            for file_path in sorted(content_dir.iterdir()):
+                if not file_path.is_file() or file_path.name == ".gitkeep":
+                    continue
+
+                relative_path = str(file_path.relative_to(pack_path.parent))
+
+                if file_path.suffix not in allowed_suffixes:
+                    allowed = ", ".join(sorted(allowed_suffixes))
+                    issues.append(ValidationIssue(
+                        rule_name="xsiam_filename_suffix",
+                        severity="warning",
+                        file_path=relative_path,
+                        message=(
+                            f"{content_type} only accepts {allowed} files - the "
+                            f"official content store rejects other suffixes"
+                        ),
+                    ))
+                elif not file_path.stem.startswith(f"{pack_name}_"):
+                    issues.append(ValidationIssue(
+                        rule_name="xsiam_filename_pack_prefix",
+                        severity="warning",
+                        file_path=relative_path,
+                        message=(
+                            f"filename must start with '{pack_name}_' - the "
+                            f"official content store rejects mismatched names"
+                        ),
+                    ))
+
+        return issues
+
+    def _load_strict_models(self, content_types: list[str]) -> dict:
+        """Import the demisto-sdk strict models for the given content types.
+
+        Returns an empty mapping when demisto-sdk is unavailable, so the
+        check degrades to a no-op rather than failing validation.
+        """
+        import importlib
+
+        models = {}
+        for content_type in content_types:
+            module_name, model_name, _ = STRICT_MODEL_SOURCES[content_type]
+            try:
+                module = importlib.import_module(module_name)
+                models[content_type] = getattr(module, model_name)
+            except Exception:
+                continue
+        return models
+
+    def _check_strict_schemas(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check YAML content items against the demisto-sdk strict models.
+
+        Catches required fields that are missing and fields the model
+        forbids. Reported as warnings because the models are stricter than
+        what a tenant accepts at install time, but match what the official
+        content store enforces.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        candidates: dict[str, list[Path]] = {}
+        for content_type, (_, _, nested) in STRICT_MODEL_SOURCES.items():
+            content_dir = pack_path / content_type
+            if not content_dir.exists():
+                continue
+            paths = (
+                sorted(content_dir.rglob("*.yml"))
+                if nested
+                else sorted(content_dir.glob("*.yml"))
+            )
+            if paths:
+                candidates[content_type] = paths
+
+        if not candidates:
+            return []
+
+        models = self._load_strict_models(list(candidates))
+        if not models:
+            return []
+
+        issues = []
+        for content_type, paths in candidates.items():
+            model = models.get(content_type)
+            if model is None:
+                continue
+
+            for file_path in paths:
+                try:
+                    data = yaml.safe_load(file_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, yaml.YAMLError):
+                    # Malformed or unreadable files are demisto-sdk's to report.
+                    continue
+                if not isinstance(data, dict):
+                    continue
+
+                try:
+                    model.parse_obj(data)
+                except Exception as exc:
+                    errors = getattr(exc, "errors", None)
+                    if not callable(errors):
+                        continue
+                    relative_path = str(file_path.relative_to(pack_path.parent))
+                    for error in errors():
+                        field = ".".join(str(part) for part in error.get("loc", ()))
+                        issues.append(ValidationIssue(
+                            rule_name="strict_schema_mismatch",
+                            severity="warning",
+                            file_path=relative_path,
+                            message=(
+                                f"'{field}': {error.get('msg', 'schema mismatch')} "
+                                f"(demisto-sdk {model.__name__})"
+                            ),
+                        ))
+
+        return issues
+
+    def _check_unmappable_xdm_fields(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check modelling rule XIF files for platform-derived XDM fields.
+
+        Certain XDM fields are valid in the schema but cannot be mapping
+        targets in a data model rule; assigning to one leaves the pack in
+        an orphaned state on the tenant (the rule installs but never
+        compiles). Assignments are errors. Any other occurrence inside a
+        modelling rule is unusual and reported as a warning. Other content
+        types (correlation rule XQL, investigation queries) legitimately
+        reference these fields and are not checked.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        issues = []
+        rules_dir = pack_path / "ModelingRules"
+        if not rules_dir.exists():
+            return issues
+
+        for xif_path in sorted(rules_dir.rglob("*.xif")):
+            if not xif_path.is_file():
+                continue
+            try:
+                content = xif_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            relative_path = str(xif_path.relative_to(pack_path.parent))
+            for finding in scan_unmappable_fields(content):
+                if finding["assignment"]:
+                    issues.append(ValidationIssue(
+                        rule_name="unmappable_xdm_field_assignment",
+                        severity="error",
+                        file_path=relative_path,
+                        message=(
+                            f"'{finding['field']}' is a platform-derived XDM field and "
+                            f"cannot be a mapping target in a data model rule - remove "
+                            f"the assignment or the pack installs in an orphaned state"
+                        ),
+                        line_number=finding["line"],
+                    ))
+                else:
+                    issues.append(ValidationIssue(
+                        rule_name="unmappable_xdm_field_reference",
+                        severity="warning",
+                        file_path=relative_path,
+                        message=(
+                            f"'{finding['field']}' is a platform-derived XDM field that "
+                            f"a data model rule cannot populate - confirm this "
+                            f"occurrence is intentional"
+                        ),
+                        line_number=finding["line"],
+                    ))
+
         return issues
     
     def _check_filenames(self, pack_path: Path) -> list[ValidationIssue]:

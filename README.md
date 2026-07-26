@@ -26,8 +26,9 @@ The demisto-sdk has many features and validation rules. Spellbook wraps it in a 
 
 - Instance initialisation with optional GitHub Actions templates
 - Multi-pack support within a single content instance
-- Content renaming to fix naming mismatches after copying packs
-- Validation using demisto-sdk
+- Import of tenant-authored content via `summon correlation` and `summon datamodel`
+- Token-based template generation via `summon template` (e.g. `intel_retrohunt`, `parsing_modeling`)
+- Validation using demisto-sdk, plus ruff linting of Python content with the official demisto/content store ruleset
 - Automated packaging into distributable zip files
 - Direct upload to Cortex Platform instances
 
@@ -69,6 +70,11 @@ docker run --rm \
   ghcr.io/gocortexio/spellbook build --all
 ```
 
+If no packs are discovered, `build --all` and `validate-all` exit with a
+grepable `[ERROR]` rather than reporting success, so a missing volume mount in
+CI cannot produce a green pipeline and an empty release. SamplePack is excluded
+from discovery; build it directly by name.
+
 ## Commands
 
 | Command | Description |
@@ -86,8 +92,42 @@ docker run --rm \
 | set-version | Set a specific version for a pack |
 | bump-version | Automatically increment pack version |
 | summon correlation | Import correlation rules from platform JSON export |
+| summon datamodel | Import a data model rule from XIF text |
 | summon template | Generate content from templates with token substitution |
 | rename-content | Rename content items to match pack name (temporarily disabled) |
+
+## Creating and Importing Content
+
+Create a new pack. By default `create` scaffolds a placeholder `Author_image.png`
+(the GoCortexIO wordmark) at the pack root; use `--author` to set the pack
+author, or `--no-author-image` to skip the image:
+
+```bash
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook create MyPack --author "My Organisation"
+
+# skip the placeholder author image
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook create MyPack --no-author-image
+```
+
+Import content authored in a Cortex Platform tenant. Both importers read from
+stdin, so pipe a file in or paste and press Ctrl+D:
+
+```bash
+# correlation rules from a JSON export
+cat rules.json | docker run -i --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon correlation MyPack
+
+# a data model (XDM) rule from XIF (must start with [MODEL: dataset="..."])
+cat rule.xif | docker run -i --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
+`summon datamodel` writes the three-file modelling rule package (`.yml`, `.xif`,
+`_schema.json`) into `ModelingRules/`, named after the dataset. Use `--name` to
+override the name or `--minimal-schema` to emit only `_raw_log` instead of
+inferring columns.
 
 ## Instance Structure
 
@@ -102,10 +142,12 @@ my-content/
 |   +-- SamplePack/         # Starter pack with examples
 |       |-- pack_metadata.json
 |       |-- README.md
+|       |-- Author_image.png # Author branding (auto-detected by demisto-sdk)
 |       |-- CorrelationRules/
 |       |-- ParsingRules/
 |       +-- ModelingRules/
 |-- artifacts/              # Built zip files (gitignored)
+|-- templates/              # Built-in templates copied during init (used by `summon template`)
 +-- spellbook.yaml          # Build configuration
 ```
 
@@ -123,6 +165,7 @@ defaults:
   marketplaces:
     - xsoar
     - marketplacev2
+    - platform
 
 exclude_packs: []
 
@@ -140,31 +183,31 @@ Pack versions are stored in `pack_metadata.json` within each pack. Use these com
 
 ```bash
 # Show current version
-gocortex-spellbook version SamplePack
+python spellbook.py version SamplePack
 
 # Set a specific version
-gocortex-spellbook set-version SamplePack 2.0.0
+python spellbook.py set-version SamplePack 2.0.0
 
 # Set version and create Git tag (stages all pack files)
-gocortex-spellbook set-version SamplePack 2.0.0 --tag
+python spellbook.py set-version SamplePack 2.0.0 --tag
 
 # Increment revision (1.0.0 -> 1.0.1) - default behaviour
-gocortex-spellbook bump-version SamplePack
+python spellbook.py bump-version SamplePack
 
 # Increment revision explicitly (1.0.0 -> 1.0.1)
-gocortex-spellbook bump-version SamplePack --revision
+python spellbook.py bump-version SamplePack --revision
 
 # Increment minor version (1.0.0 -> 1.1.0)
-gocortex-spellbook bump-version SamplePack --minor
+python spellbook.py bump-version SamplePack --minor
 
 # Increment major version (1.0.0 -> 2.0.0)
-gocortex-spellbook bump-version SamplePack --major
+python spellbook.py bump-version SamplePack --major
 
 # Bump version and create Git tag for CI/CD
-gocortex-spellbook bump-version SamplePack --tag
+python spellbook.py bump-version SamplePack --tag
 
 # Bump with custom commit message (for auto-closing issues)
-gocortex-spellbook bump-version SamplePack --tag -m "Closes #123"
+python spellbook.py bump-version SamplePack --tag -m "Closes #123"
 ```
 
 The `--tag` flag stages all files in the pack directory, commits them, and creates a Git tag in the format `PackName-v1.0.1`. Use `--message` or `-m` to specify a custom commit message for CI/CD integration. Push with `git push && git push origin PackName-v1.0.1` to trigger CI/CD builds.

@@ -272,7 +272,17 @@ The .env file is included in .gitignore by default to prevent accidental commits
 - --platform - Upload to a Cortex Platform tenant (recommended; requires XSIAM_AUTH_ID)
 - --xsiam - Legacy XSIAM upload flag (requires XSIAM_AUTH_ID). Note: silently drops Jobs and other Platform-only content types; prefer --platform.
 - --insecure - Skip SSL certificate verification
-- --skip-validation - Skip pack validation before upload
+- --skip-validation - Skip pack validation before upload (also skips the marketplace pre-flight check)
+- --strict-marketplace - Treat a marketplace mismatch between the chosen flag (--platform/--xsiam) and the pack's pack_metadata.json `marketplaces` array as an error rather than a warning
+
+### Marketplace pre-flight check
+
+Before invoking demisto-sdk, `spellbook upload` compares the chosen marketplace flag against the pack's `pack_metadata.json` `marketplaces` array and emits a grepable `[WARN]` if they do not line up:
+
+- `--platform` expects `"platform"` to be present.
+- `--xsiam` expects `"marketplacev2"` to be present.
+
+This catches the silent-drop class of bug (e.g. demisto-sdk filtering Jobs out at upload time when the pack is not tagged for the target marketplace) before the upload runs. Newly scaffolded packs already include `"platform"`, so this check mostly affects pre-existing packs. Pass `--strict-marketplace` to fail the upload instead of just warning, or `--skip-validation` to bypass the check entirely.
 
 ---
 

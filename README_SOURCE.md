@@ -30,7 +30,7 @@ cd gocortex-spellbook
 Using pip:
 
 ```bash
-pip install "demisto-sdk==1.38.23" "gitpython>=3.1.46" "pyyaml>=6.0.3"
+pip install "demisto-sdk==1.39.1" "gitpython>=3.1.50" "pyyaml>=6.0.3" "ruff==0.8.0"
 ```
 
 Or using uv:
@@ -43,6 +43,20 @@ Verify the installation:
 
 ```bash
 python spellbook.py --help
+```
+
+---
+
+## Run the Test Suite
+
+The tests include contract and golden checks against the pinned demisto-sdk:
+generated correlation, parsing, and modelling rules are validated against the
+SDK's strict schemas, so schema drift fails the suite rather than a tenant
+upload. The same suite runs in CI on every push and pull request.
+
+```bash
+pip install pytest
+pytest
 ```
 
 ---
@@ -118,11 +132,41 @@ python spellbook.py create MyNewPack -c my-content/spellbook.yaml --description 
 
 This creates a properly structured pack with all required metadata files.
 
+Options:
+
+- `--author "Name"` sets the pack author. Without it, the author from `spellbook.yaml` `defaults.author` is used.
+- `--template default|integration|playbook|minimal` selects which content directories are scaffolded.
+- `--no-author-image` skips the placeholder author image.
+
+By default `create` writes a placeholder `Author_image.png` (the GoCortexIO
+wordmark) at the pack root, which demisto-sdk auto-detects as the pack's author
+image. Replace it with your own branding, or pass `--no-author-image` to skip it.
+
+---
+
+## Import a Data Model Rule
+
+Copy a data model (XDM) rule from the tenant rule editor, including its
+`[MODEL: dataset="..."]` header, then pipe the XIF to the summon command:
+
+```bash
+cat rule.xif | python spellbook.py summon datamodel MyNewPack -c my-content/spellbook.yaml
+```
+
+This writes the three-file modelling rule package (`.yml`, `.xif`,
+`_schema.json`) with matching filenames into `Packs/MyNewPack/ModelingRules/`.
+The package is named after the dataset by default; use `--name "Base Name"` to
+override it, or `--minimal-schema` to write only `_raw_log` instead of inferring
+columns from the rule body. Review the inferred column types before uploading.
+
+The same stdin contract applies to `summon correlation` (JSON in, correlation
+rule YAML out).
+
 ---
 
 ## Validate
 
-Validation checks your pack against demisto-sdk rules:
+Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff using the official demisto/content store ruleset, so lint findings surface before store submission:
 
 ```bash
 python spellbook.py validate MyNewPack -c my-content/spellbook.yaml
@@ -149,6 +193,12 @@ To build all packs:
 ```bash
 python spellbook.py build --all -c my-content/spellbook.yaml
 ```
+
+If no packs are discovered, `build --all` and `validate-all` exit with a
+grepable `[ERROR]` rather than reporting success. This is deliberate: in CI a
+missing volume mount would otherwise produce a green pipeline and an empty
+release. SamplePack is excluded from discovery, so an instance holding only
+SamplePack counts as empty here; build it directly by name.
 
 The zip files appear in my-content/artifacts/:
 
@@ -183,6 +233,8 @@ python spellbook.py upload my-content/Packs/MyNewPack --platform
 python spellbook.py upload my-content/Packs/MyNewPack
 
 # Upload with insecure connection (skip certificate validation)
+# A grepable [WARN] Certificate validation: disabled (--insecure) line is
+# emitted to stdout so CI logs make the condition explicit.
 python spellbook.py upload my-content/Packs/MyNewPack --platform --insecure
 
 # Legacy XSIAM upload (use only for tenants not yet on Cortex Platform;
@@ -257,6 +309,7 @@ All commands below assume you are in the gocortex-spellbook directory:
 |--------|---------|
 | List packs | python spellbook.py list-packs -c my-content/spellbook.yaml |
 | Create pack | python spellbook.py create PackName -c my-content/spellbook.yaml |
+| Create pack without author image | python spellbook.py create PackName --no-author-image -c my-content/spellbook.yaml |
 | Validate pack | python spellbook.py validate PackName -c my-content/spellbook.yaml |
 | Validate all | python spellbook.py validate-all -c my-content/spellbook.yaml |
 | Build pack | python spellbook.py build PackName -c my-content/spellbook.yaml |
@@ -268,5 +321,6 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Bump and tag | python spellbook.py bump-version PackName --tag -c my-content/spellbook.yaml |
 | Bump with message | python spellbook.py bump-version PackName --tag -m "Closes #123" -c my-content/spellbook.yaml |
 | Import correlations | cat rules.json \| python spellbook.py summon correlation PackName -c my-content/spellbook.yaml |
+| Import data model rule | cat rule.xif \| python spellbook.py summon datamodel PackName -c my-content/spellbook.yaml |
 | Generate from template | python spellbook.py summon template intel_retrohunt PackName --set KEY=VALUE -c my-content/spellbook.yaml |
 | List templates | python spellbook.py summon template --list -c my-content/spellbook.yaml |

@@ -107,11 +107,27 @@ docker run --rm \
 
 This creates a properly structured pack with all required metadata files.
 
+Options:
+
+- `--author "Name"` sets the pack author. Without it, the author from `spellbook.yaml` `defaults.author` is used.
+- `--template default|integration|playbook|minimal` selects which content directories are scaffolded.
+- `--no-author-image` skips the placeholder author image.
+
+By default `create` scaffolds a placeholder `Author_image.png` (the GoCortexIO
+wordmark) at the pack root. Replace it with your own branding, or pass
+`--no-author-image` to skip it:
+
+```bash
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook create MyNewPack \
+  --author "My Organisation" --no-author-image
+```
+
 ---
 
 ## Validate
 
-Validation checks your pack against demisto-sdk rules:
+Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff using the official demisto/content store ruleset, so lint findings surface before store submission:
 
 ```bash
 docker run --rm \
@@ -150,6 +166,12 @@ docker run --rm \
   -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \
   ghcr.io/gocortexio/spellbook build --all
 ```
+
+If no packs are discovered, `build --all` and `validate-all` exit with a
+grepable `[ERROR]` rather than reporting success. This is deliberate: in CI a
+missing volume mount would otherwise produce a green pipeline and an empty
+release. SamplePack is excluded from discovery, so an instance holding only
+SamplePack counts as empty here; build it directly by name.
 
 The zip files appear in my-content/artifacts/:
 
@@ -366,6 +388,36 @@ The command:
 - Adds required fields (global_rule_id, fromversion)
 - Creates YAML files in Packs/MyPack/CorrelationRules/
 
+### Importing a Data Model Rule
+
+Copy a data model (XDM) rule from the tenant rule editor, including its
+`[MODEL: dataset="..."]` header, then pipe the XIF to the summon command:
+
+```bash
+cat rule.xif | docker run -i --rm \
+  -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
+For interactive paste (paste the XIF then press Ctrl+D):
+
+```bash
+docker run -it --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
+The command writes the three-file modelling rule package (`.yml`, `.xif`,
+`_schema.json`) with matching filenames into `Packs/MyPack/ModelingRules/`. The
+package is named after the dataset by default (for example
+`cloudflare_account_audit_raw` becomes `CloudflareAccountAudit`), so a pack can
+hold many rules. Options:
+
+- `--name "Base Name"` overrides the derived name; the `ModelingRule` suffix is appended automatically.
+- `--minimal-schema` writes only `_raw_log` to the schema instead of inferring columns from the rule body.
+
+Schema columns are inferred from the fields the rule reads. Review the inferred
+types (all are written as `string`) before uploading.
+
 ---
 
 ## Command Reference
@@ -388,6 +440,7 @@ Replace `<command>` with any of the following:
 | List instances | list-instances |
 | List packs | list-packs |
 | Create pack | create PackName |
+| Create pack without author image | create PackName --no-author-image |
 | Validate pack | validate PackName |
 | Validate all | validate-all |
 | Build pack | build PackName |
@@ -406,5 +459,6 @@ Replace `<command>` with any of the following:
 | Bump and tag | bump-version PackName --tag |
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
 | Import correlations | summon correlation PackName (with stdin) |
+| Import data model rule | summon datamodel PackName (with stdin) |
 | Generate from template | summon template intel_retrohunt PackName --set KEY=VALUE |
 | List templates | summon template --list |

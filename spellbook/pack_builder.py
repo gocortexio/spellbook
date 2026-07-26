@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 import yaml
 
+from .python_lint import run_ruff_check
 from .version_manager import VersionManager
 
 
@@ -24,36 +25,6 @@ EXCLUDED_PACKS = ["SamplePack"]
 
 class PackBuilder:
     """Builds and packages Cortex Platform content packs."""
-
-    PACK_DIRECTORIES = [
-        "Integrations",
-        "Scripts",
-        "Playbooks",
-        "Reports",
-        "Dashboards",
-        "IncidentTypes",
-        "IncidentFields",
-        "Layouts",
-        "Classifiers",
-        "IndicatorTypes",
-        "IndicatorFields",
-        "Connections",
-        "TestPlaybooks",
-        "Wizards",
-        "Jobs",
-        "ParsingRules",
-        "ModelingRules",
-        "CorrelationRules",
-        "XSIAMDashboards",
-        "XSIAMReports",
-        "XDRCTemplates",
-        "Triggers",
-        "Lists",
-        "GenericDefinitions",
-        "GenericFields",
-        "GenericModules",
-        "GenericTypes",
-    ]
 
     def __init__(self, config_path: str = "spellbook.yaml"):
         """
@@ -65,13 +36,29 @@ class PackBuilder:
         self.config_path = Path(config_path)
         self.base_dir = self.config_path.parent if self.config_path.parent != Path(".") else Path(".")
         self.config = self._load_config(config_path)
-        
-        packs_dir = self.config.get("packs_directory", "Packs")
-        artifacts_dir = self.config.get("artifacts_directory", "artifacts")
-        
-        self.packs_dir = self.base_dir / packs_dir
-        self.artifacts_dir = self.base_dir / artifacts_dir
-        
+
+        repo_root = self.base_dir.resolve()
+
+        raw_packs_dir = self.config.get("packs_directory", "Packs")
+        resolved_packs = (self.base_dir / raw_packs_dir).resolve()
+        try:
+            resolved_packs.relative_to(repo_root)
+        except ValueError:
+            raise ValueError(
+                f"packs_directory '{raw_packs_dir}' resolves outside the content repository"
+            )
+        self.packs_dir = resolved_packs
+
+        raw_artifacts_dir = self.config.get("artifacts_directory", "artifacts")
+        resolved_artifacts = (self.base_dir / raw_artifacts_dir).resolve()
+        try:
+            resolved_artifacts.relative_to(repo_root)
+        except ValueError:
+            raise ValueError(
+                f"artifacts_directory '{raw_artifacts_dir}' resolves outside the content repository"
+            )
+        self.artifacts_dir = resolved_artifacts
+
         self.version_manager = VersionManager(
             self.config.get("version_tag_pattern", "{pack_name}-v{version}")
         )
@@ -115,8 +102,19 @@ class PackBuilder:
         return sorted(packs)
 
     def get_pack_path(self, pack_name: str) -> Path:
-        """Get the full path to a pack directory."""
-        return self.packs_dir / pack_name
+        """Get the full path to a pack directory.
+
+        Raises:
+            ValueError: If pack_name traverses outside the packs directory.
+        """
+        candidate = (self.packs_dir / pack_name).resolve()
+        try:
+            candidate.relative_to(self.packs_dir.resolve())
+        except ValueError:
+            raise ValueError(
+                f"pack_name '{pack_name}' resolves outside the packs directory"
+            )
+        return candidate
 
     def pack_exists(self, pack_name: str) -> bool:
         """
@@ -140,9 +138,14 @@ class PackBuilder:
             pack_name: Name of the pack to validate.
 
         Raises:
-            SystemExit: If pack does not exist.
+            SystemExit: If pack does not exist or pack_name is invalid.
         """
-        if not self.pack_exists(pack_name):
+        try:
+            exists = self.pack_exists(pack_name)
+        except ValueError as exc:
+            click.echo(f"[ERROR] Invalid pack name: {exc}")
+            raise SystemExit(1)
+        if not exists:
             available = self.discover_packs()
             click.echo(f"[ERROR] Pack '{pack_name}' not found")
             if available:
@@ -233,6 +236,12 @@ class PackBuilder:
             return True
 
         pack_path = self.get_pack_path(pack_name)
+
+        # Lint Python content with the store pipeline's ruff configuration.
+        # demisto-sdk validate does not run ruff, so without this a pack can
+        # build clean locally and then fail official store submission.
+        ruff_passed = run_ruff_check(pack_path)
+
         content_root = pack_path.parent.parent.resolve()
         
         git_dir = content_root / ".git"
@@ -263,7 +272,14 @@ class PackBuilder:
             except subprocess.CalledProcessError as e:
                 click.echo(f"[WARN] Could not initialise git repository: {e}")
         
-        cmd = ["demisto-sdk", "validate", "-i", str(pack_path)]
+        # The input path must be relative to the content root (the process
+        # cwd). An absolute -i path makes demisto-sdk resolve its internal
+        # CONTENT_PATH to an empty string, which later crashes validators
+        # with "is not in the subpath of ''".
+        cmd = [
+            "demisto-sdk", "validate",
+            "-i", str(pack_path.relative_to(content_root)),
+        ]
 
         skip_checks = validation_config.get("skip_checks", [])
         for check in skip_checks:
@@ -286,6 +302,9 @@ class PackBuilder:
                 click.echo(result.stderr, nl=False)
             
             if result.returncode == 0:
+                if not ruff_passed:
+                    click.echo(f"Validation failed for {pack_name} (Python lint)")
+                    return False
                 click.echo(f"Validation passed for {pack_name}")
                 self._check_gitkeep_files(pack_name)
                 return True
@@ -294,7 +313,7 @@ class PackBuilder:
                 return False
         except FileNotFoundError:
             click.echo("demisto-sdk not found, skipping validation")
-            return True
+            return ruff_passed
         finally:
             if git_initialised:
                 try:
@@ -367,9 +386,13 @@ class PackBuilder:
 
         try:
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(pack_path):
+                for root, dirs, files in os.walk(pack_path, followlinks=False):
+                    dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
                     for file in files:
                         file_path = os.path.join(root, file)
+                        if os.path.islink(file_path):
+                            click.echo(f"[WARN] Skipping symlink during packaging: {os.path.relpath(file_path, pack_path)}")
+                            continue
                         arcname = os.path.relpath(file_path, pack_path)
                         zipf.write(file_path, arcname)
 
@@ -440,6 +463,11 @@ class PackBuilder:
         """
         Check if content items have mismatched naming.
 
+        Only CorrelationRules are checked. Modelling and parsing rules are
+        conventionally named after their dataset, not the pack (this is the
+        demisto/content convention and what `summon datamodel` produces), so
+        flagging them against the pack name would be a false positive.
+
         Args:
             pack_name: Name of the pack to check.
 
@@ -451,7 +479,7 @@ class PackBuilder:
             return []
 
         mismatched = []
-        content_types = ["ModelingRules", "ParsingRules", "CorrelationRules"]
+        content_types = ["CorrelationRules"]
 
         for content_type in content_types:
             content_dir = pack_path / content_type
@@ -468,172 +496,3 @@ class PackBuilder:
 
         return mismatched
 
-    def rename_content(self, pack_name: str) -> dict[str, str]:
-        """
-        Rename all content items to match the pack name.
-
-        This handles ModelingRules, ParsingRules, and CorrelationRules.
-        For each content item, it renames:
-        - Folder names
-        - File names
-        - Internal id and name fields in YAML files
-        - References to .xif and .json files
-
-        Args:
-            pack_name: Name of the pack.
-
-        Returns:
-            Dictionary mapping old names to new names.
-        """
-        pack_path = self.get_pack_path(pack_name)
-        if not pack_path.exists():
-            raise FileNotFoundError(f"Pack not found: {pack_name}")
-
-        renamed = {}
-
-        renamed.update(self._rename_modeling_rules(pack_path, pack_name))
-        renamed.update(self._rename_parsing_rules(pack_path, pack_name))
-        renamed.update(self._rename_correlation_rules(pack_path, pack_name))
-
-        return renamed
-
-    def _rename_modeling_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
-        """Rename ModelingRules content to match pack name."""
-        renamed = {}
-        rules_dir = pack_path / "ModelingRules"
-        if not rules_dir.exists():
-            return renamed
-
-        new_rule_id = f"{pack_name}ModelingRule"
-        new_folder = rules_dir / new_rule_id
-
-        for item in list(rules_dir.iterdir()):
-            if item.is_dir() and item.name != new_rule_id:
-                old_name = item.name
-                old_id = old_name
-
-                for f in list(item.iterdir()):
-                    if f.suffix == ".yml":
-                        self._update_yaml_id(f, new_rule_id, pack_name, "modeling")
-                        new_fname = f"{new_rule_id}.yml"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-                    elif f.suffix == ".xif":
-                        new_fname = f"{new_rule_id}.xif"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-                    elif f.name.endswith("_schema.json"):
-                        new_fname = f"{new_rule_id}_schema.json"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-
-                if item.name != new_rule_id:
-                    item.rename(new_folder)
-                    renamed[old_name] = new_rule_id
-
-        return renamed
-
-    def _rename_parsing_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
-        """Rename ParsingRules content to match pack name."""
-        renamed = {}
-        rules_dir = pack_path / "ParsingRules"
-        if not rules_dir.exists():
-            return renamed
-
-        new_rule_id = f"{pack_name}ParsingRule"
-        new_folder = rules_dir / new_rule_id
-
-        for item in list(rules_dir.iterdir()):
-            if item.is_dir() and item.name != new_rule_id:
-                old_name = item.name
-
-                for f in list(item.iterdir()):
-                    if f.suffix == ".yml":
-                        self._update_yaml_id(f, new_rule_id, pack_name, "parsing")
-                        new_fname = f"{new_rule_id}.yml"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-                    elif f.suffix == ".xif":
-                        new_fname = f"{new_rule_id}.xif"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-                    elif f.name.endswith("_samples.json"):
-                        new_fname = f"{new_rule_id}_samples.json"
-                        if f.name != new_fname:
-                            new_path = f.parent / new_fname
-                            f.rename(new_path)
-                            renamed[f.name] = new_fname
-
-                if item.name != new_rule_id:
-                    item.rename(new_folder)
-                    renamed[old_name] = new_rule_id
-
-        return renamed
-
-    def _rename_correlation_rules(self, pack_path: Path, pack_name: str) -> dict[str, str]:
-        """Rename CorrelationRules content to match pack name."""
-        renamed = {}
-        rules_dir = pack_path / "CorrelationRules"
-        if not rules_dir.exists():
-            return renamed
-
-        for item in list(rules_dir.iterdir()):
-            if item.is_file() and item.suffix in [".yml", ".yaml"]:
-                with open(item, "r", encoding="utf-8") as f:
-                    content = yaml.safe_load(f)
-
-                if content:
-                    old_id = content.get("global_rule_id", "")
-                    if old_id and not old_id.startswith(pack_name):
-                        rule_suffix = old_id.split("_", 1)[-1] if "_" in old_id else "Rule"
-                        new_id = f"{pack_name}_{rule_suffix}"
-                        content["global_rule_id"] = new_id
-
-                        vendor = pack_name.lower()
-                        if "dataset" in content:
-                            content["dataset"] = f"{vendor}_raw"
-                        if "xql_query" in content:
-                            old_query = content["xql_query"]
-                            lines = old_query.split("\n")
-                            if lines and lines[0].strip().startswith("dataset"):
-                                lines[0] = f"  dataset = {vendor}_raw"
-                            content["xql_query"] = "\n".join(lines)
-
-                        with open(item, "w", encoding="utf-8") as f:
-                            yaml.dump(content, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-                        new_fname = f"{new_id}.yml"
-                        if item.name != new_fname:
-                            new_path = item.parent / new_fname
-                            item.rename(new_path)
-                            renamed[item.name] = new_fname
-
-        return renamed
-
-    def _update_yaml_id(self, yaml_path: Path, new_id: str, pack_name: str, rule_type: str) -> None:
-        """Update id and name fields in a YAML file."""
-        with open(yaml_path, "r", encoding="utf-8") as f:
-            content = yaml.safe_load(f)
-
-        if content:
-            content["id"] = new_id
-            content["name"] = f"{pack_name} {rule_type.title()} Rule"
-            content["rules"] = f"{new_id}.xif"
-
-            if rule_type == "modeling":
-                content["schema"] = f"{new_id}_schema.json"
-            elif rule_type == "parsing":
-                content["samples"] = f"{new_id}_samples.json"
-
-            with open(yaml_path, "w", encoding="utf-8") as f:
-                yaml.dump(content, f, default_flow_style=False, allow_unicode=True, sort_keys=False)

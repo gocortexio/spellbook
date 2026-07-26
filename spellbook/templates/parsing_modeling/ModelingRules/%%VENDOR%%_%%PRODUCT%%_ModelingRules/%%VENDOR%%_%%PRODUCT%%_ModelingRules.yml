@@ -1,0 +1,6 @@
+id: "%%VENDOR%%_%%PRODUCT%%_ModelingRule"
+name: "%%VENDOR%% %%PRODUCT%% Modeling Rule"
+fromversion: 8.3.0
+tags: "%%VENDOR%%_%%PRODUCT%%"
+rules: ''
+schema: ''

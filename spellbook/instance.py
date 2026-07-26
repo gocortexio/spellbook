@@ -47,7 +47,13 @@ class InstanceManager:
         Returns:
             Path to the created instance.
         """
-        instance_path = self.base_path / name
+        instance_path = (self.base_path / name).resolve()
+        try:
+            instance_path.relative_to(self.base_path.resolve())
+        except ValueError:
+            raise ValueError(
+                f"Instance name '{name}' resolves outside the base directory"
+            )
 
         if instance_path.exists():
             raise FileExistsError(
@@ -107,7 +113,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Determine build target
+        id: target
+        env:
+          INPUT_PACK_NAME: ${{ github.event.inputs.pack_name }}
+        run: |
+          if [ -n "${INPUT_PACK_NAME}" ]; then
+            TARGET="${INPUT_PACK_NAME}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # Tag format is PackName-vX.Y.Z; build only the tagged pack
+            TARGET=$(echo "${GITHUB_REF_NAME}" | sed 's/-v[0-9].*$//')
+          else
+            TARGET="--all"
+          fi
+          echo "Build target: ${TARGET}"
+          echo "target=${TARGET}" >> "${GITHUB_OUTPUT}"
+
       - name: Build packs
+        env:
+          BUILD_TARGET: ${{ steps.target.outputs.target }}
         run: |
           mkdir -p artifacts
           docker run --rm --user $(id -u):$(id -g) \\
@@ -115,7 +139,7 @@ jobs:
             -v ${{ github.workspace }}/artifacts:/content/artifacts \\
             -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \\
             ghcr.io/gocortexio/spellbook:latest \\
-            build --all --no-validate
+            build "${BUILD_TARGET}" --no-validate
 
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
@@ -451,6 +475,10 @@ docker run --rm -v $(pwd):/content \\
 # The zip files are created in artifacts/
 ls artifacts/
 ```
+
+SamplePack is example content. It is excluded from build --all, validate-all,
+and list-packs discovery, but can be built or validated directly by name as
+shown above.
 
 ## Creating a New Pack
 

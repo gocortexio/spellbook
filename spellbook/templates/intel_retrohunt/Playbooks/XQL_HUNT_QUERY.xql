@@ -1,39 +1,46 @@
-// XQL query produced by Spellbook by GoCortex (https://spellbook.gocortex.io/)
-// Issues, questions or feature requests can be raised here; https://github.com/gocortexio/spellbook
+// SPDX-FileCopyrightText: GoCortexIO
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // ============================================================================
 // UNIVERSAL THREAT INTEL HUNT TEMPLATE
 // ============================================================================
 //
 // This template matches events from any data source against the Cortex XSIAM
-// threat intelligence (indicators) dataset. It supports six hunt types:
+// threat intelligence (indicators) dataset. It supports seven hunt types:
 //
-//   Hunt Type       | %%INDICATOR_TYPE%%    | %%MATCH_FIELD%%           | Typical Sources
-//   ----------------|-----------------------|---------------------------|---------------------------
-//   IP address      | "IP"                  | source_ipv4 or target_ipv4| Firewall, proxy, NDR
-//   Domain          | "Domain"              | target_domain             | DNS, proxy, web filter
-//   File hash SHA256| "FileHash-SHA256"     | file_hash_sha256          | EDR, sandbox, email GW
-//   File hash MD5   | "FileHash-MD5"        | file_hash_md5             | EDR, sandbox, email GW
-//   Username        | "Username"            | source_user_username or   | Okta, Azure AD, Duo,
-//                   |                       | target_user_username      | Active Directory
-//   URL             | "URL"                 | target_url                | Proxy, web filter, CASB
-//   Software        | "SOFTWARE"            | software_package_purl     | SBOM, SCA, SAST
+//   Hunt Type        | %\%INDICATOR_TYPE%\%  | %\%MATCH_FIELD%\%         | Typical Sources
+//   -----------------|-----------------------|---------------------------|---------------------------
+//   IP address       | "IP"                  | source_ipv4 or target_ipv4| Firewall, proxy, NDR
+//   Domain           | "Domain"              | target_domain             | DNS, proxy, web filter
+//   File hash SHA256 | "FileHash-SHA256"     | file_hash_sha256          | EDR, sandbox, email GW
+//   File hash MD5    | "FileHash-MD5"        | file_hash_md5             | EDR, sandbox, email GW
+//   Username         | "Username"            | source_user_username or
+//                    |                       | target_user_username      | Okta, Azure AD, Duo, AD
+//   URL              | "URL"                 | target_url                | Proxy, web filter, CASB
+//   Software         | "SOFTWARE"            | software_package_purl     | SBOM, SCA, SAST
+//
+// Both %\%INDICATOR_TYPE%\% and %\%MATCH_FIELD%\% interpolate into `IN (...)`
+// lists, so single-type and multi-type hunts share one shape:
+//   single type:  %\%INDICATOR_TYPE%\% = "IP"                  -> IN ("IP")
+//   multi type:   %\%INDICATOR_TYPE%\% = "IP", "Domain"        -> IN ("IP", "Domain")
+//   single field: %\%MATCH_FIELD%\%    = target_ipv4           -> IN (target_ipv4)
+//   multi field:  %\%MATCH_FIELD%\%    = target_domain, target_ipv4 -> IN (target_domain, target_ipv4)
 //
 // ============================================================================
 // HOW TO ADAPT THIS TEMPLATE
 // ============================================================================
 //
 // Step 1: Set the four placeholders
-//   %%LOOKBACK%%         Retro-hunt period (e.g. 30d, 7d, 24h)
-//   %%DATASET%%          Source dataset (e.g. panw_ngfw_traffic_raw)
-//   %%INDICATOR_TYPE%%   Indicator type from the table above
-//   %%MATCH_FIELD%%      Intermediary field name to join on (from the table above)
+//   %\%LOOKBACK%\%        Retro-hunt period (e.g. 30d, 7d, 24h)
+//   %\%DATASET%\%         Source dataset (e.g. panw_ngfw_traffic_raw)
+//   %\%INDICATOR_TYPE%\%  One or more indicator types from the table above (comma separated)
+//   %\%MATCH_FIELD%\%     One or more intermediary field names to join on (comma separated)
 //
-// Step 2: Update %%SOURCE_FIELDS%% with the raw field names from your data source
+// Step 2: Update %%SOURCE_FIELDS%% with the raw field names from your data source.
 //   These are the product-specific column names you want to pull through.
 //   Only list the fields your source actually provides.
 //
-// Step 3: Update the FIELD MAPPING section (Section B)
+// Step 3: Update the FIELD MAPPING section (Section B).
 //   Map each raw source field to the correct intermediary name.
 //   Set any field your source does not provide to null (it is already null by default).
 //   Only uncomment the filter sections relevant to your hunt type.
@@ -63,46 +70,45 @@
 // Every output column from the comp stage maps to a known XDM field path.
 // This table is the specification for the future intelmatch_gc_raw data model rule.
 //
-//   Output Column                | XDM Target Field              | Notes
-//   -----------------------------|-------------------------------|-----------------------------
-//   _time                        | xdm.event.timestamp           | Stamped with current_time() at match
-//   event_time                   | (metadata)                    | Preserved original event _time
-//   source_ipv4                  | xdm.source.ipv4               | Source IP address
-//   source_ipv6                  | xdm.source.ipv6               | Source IPv6 address
-//   source_port                  | xdm.source.port               | Source port
-//   target_ipv4                  | xdm.target.ipv4               | Destination IP address
-//   target_ipv6                  | xdm.target.ipv6               | Destination IPv6 address
-//   target_port                  | xdm.target.port               | Destination port
+//   Output Column                | XDM Target Field                 | Notes
+//   -----------------------------|----------------------------------|-----------------------------
+//   _time                        | xdm.event.timestamp              | Stamped with current_time() at match
+//   event_time                   | (metadata)                       | Preserved original event _time
+//   source_ipv4                  | xdm.source.ipv4                  | Source IP address
+//   source_ipv6                  | xdm.source.ipv6                  | Source IPv6 address
+//   source_port                  | xdm.source.port                  | Source port
+//   target_ipv4                  | xdm.target.ipv4                  | Destination IP address
+//   target_ipv6                  | xdm.target.ipv6                  | Destination IPv6 address
+//   target_port                  | xdm.target.port                  | Destination port
 //   network_application_protocol | xdm.network.application_protocol | Application-layer protocol (HTTP, DNS, SSL)
-//   action_protocol              | xdm.network.ip_protocol       | Network-layer protocol (TCP, UDP, ICMP)
-//   target_domain                | xdm.target.domain             | Queried / accessed domain
-//   target_url                   | xdm.target.url                | Full URL accessed
-//   source_user_username         | xdm.source.user.username      | Initiating user
-//   source_user_domain           | xdm.source.user.domain        | Initiating user domain
-//   target_user_username         | xdm.target.user.username      | Target user (priv esc, etc.)
-//   target_user_domain           | xdm.target.user.domain        | Target user domain
-//   auth_method                  | xdm.auth.auth_method          | Authentication method (MFA, etc.)
-//   auth_outcome                 | xdm.event.outcome             | Auth result (success/failure)
-//   event_type                   | xdm.event.type                | Event type (e.g. Okta eventType)
-//   file_hash_sha256             | xdm.target.file.sha256        | File SHA-256 hash
-//   file_hash_md5                | xdm.target.file.md5           | File MD5 hash
-//   software_package_version     | (metadata)                    | Software package version
-//   software_package_purl        | (metadata)                    | Package URL (purl) identifier
-//   software_repository_name     | (metadata)                    | Source repository name
-//   software_asset_type_name     | (metadata)                    | Asset type classification
-//   software_asset_provider      | (metadata)                    | Asset provider / vendor
-//   software_asset_name          | (metadata)                    | Software asset name
-//   observer_name                | xdm.observer.name             | Reporting device / sensor
-//   observer_action              | xdm.observer.action           | Action taken by the device
-//   network_rule                 | xdm.network.rule              | Rule / policy that matched
-//   network_session_reason       | xdm.event.outcome_reason      | Session end / outcome reason
-//   matched_dataset              | (metadata)                    | Source dataset name
-//   matched_timeframe            | (metadata)                    | Look-back period used
-//   matched_field                | (metadata)                    | Which field was matched
-//   indicator_type               | (from indicators)             | Indicator type (IP, Domain, etc.)
-//   indicator_verdict            | (from indicators)             | Indicator verdict (Malicious, etc.)
-//   indicator_tags               | (from indicators)             | Requires adding tags to join fields
-//   count                        | (aggregation)                 | Number of matching events
+//   action_protocol              | xdm.network.ip_protocol          | Network-layer protocol (TCP, UDP, ICMP)
+//   target_domain                | xdm.target.domain                | Queried / accessed domain
+//   target_url                   | xdm.target.url                   | Full URL accessed
+//   source_user_username         | xdm.source.user.username         | Initiating user
+//   source_user_domain           | xdm.source.user.domain           | Initiating user domain
+//   target_user_username         | xdm.target.user.username         | Target user (priv esc, etc.)
+//   target_user_domain           | xdm.target.user.domain           | Target user domain
+//   auth_method                  | xdm.auth.auth_method             | Authentication method (MFA, etc.)
+//   auth_outcome                 | xdm.event.outcome                | Auth result (success / failure)
+//   event_type                   | xdm.event.type                   | Event type (e.g. Okta eventType)
+//   file_hash_sha256             | xdm.target.file.sha256           | File SHA-256 hash
+//   file_hash_md5                | xdm.target.file.md5              | File MD5 hash
+//   software_package_version     | (metadata)                       | Software package version
+//   software_package_purl        | (metadata)                       | Package URL (purl) identifier
+//   software_repository_name     | (metadata)                       | Source repository name
+//   software_asset_type_name     | (metadata)                       | Asset type classification
+//   software_asset_provider      | (metadata)                       | Asset provider / vendor
+//   software_asset_name          | (metadata)                       | Software asset name
+//   observer_name                | xdm.observer.name                | Reporting device / sensor
+//   observer_action              | xdm.observer.action              | Action taken by the device
+//   network_rule                 | xdm.network.rule                 | Rule / policy that matched
+//   network_session_reason       | xdm.event.outcome_reason         | Session end / outcome reason
+//   matched_dataset              | (metadata)                       | Source dataset name
+//   matched_timeframe            | (metadata)                       | Look-back period used
+//   matched_field                | (metadata)                       | Which field(s) were matched (scalar string, or `+`-joined when multiple fields participate)
+//   indicator_type               | (from indicators)                | Indicator type (IP, Domain, etc.)
+//   indicator_verdict            | (from indicators)                | Indicator verdict (Malicious, etc.)
+//   count                        | (aggregation)                    | Number of matching events
 //
 // ============================================================================
 // SECTION A: DATA SOURCE AND FIELD SELECTION
@@ -111,6 +117,21 @@
 // First 'config timeframe' sets the data source look-back period (your retro-hunt period)
 config timeframe = %%LOOKBACK%%
 | dataset = %%DATASET%%
+//
+// --- Optional pre-join narrowing (uncomment for noisy nested-payload sources) ---
+// Some EDR-style sources (e.g. Microsoft Defender AdvancedHunting) ship every
+// telemetry sub-table inside a single dataset and bury the interesting columns
+// in a JSON `properties` blob. Pre-narrow by `category` and lift the columns
+// out before the join, otherwise the join has to scan the whole haystack.
+//
+// | filter category = "AdvancedHunting-DeviceNetworkEvents"
+// | alter properties_ActionType = json_extract_scalar(properties, "$.ActionType")
+// | filter properties_ActionType IN ("*Connection*")
+// | alter properties_RemoteIP = json_extract_scalar(properties, "$.RemoteIP")
+// | alter properties_RemotePort = json_extract_scalar(properties, "$.RemotePort")
+// | alter properties_LocalIP = json_extract_scalar(properties, "$.LocalIP")
+// | alter properties_LocalPort = json_extract_scalar(properties, "$.LocalPort")
+// | alter properties_DeviceName = json_extract_scalar(properties, "$.DeviceName")
 //
 // Select the raw fields from your data source (see SOURCE FIELD EXAMPLES above)
 | fields %%SOURCE_FIELDS%%
@@ -121,6 +142,13 @@ config timeframe = %%LOOKBACK%%
 // Map raw source field names to standardised intermediary names.
 // Set any field your source does not provide to null (already null by default).
 // These intermediary names align with XDM field paths for the output dataset.
+//
+// Idiom: when a single source scalar represents an address that may be either
+// IPv4 or IPv6 (most logs do not pre-classify), assign the same scalar to both
+// `source_ipv4` and `source_ipv6` (likewise for the target side). Downstream
+// validation in Section C splits the two by regex; the comp stage emits both
+// columns and the eventual data model rule maps each to its XDM home. This
+// `v4 = v6 = same scalar` pattern is intentional, not a copy-paste error.
 //
 // --- Network fields (firewalls, proxies, NDR) ---
 | alter source_ipv4 = null
@@ -174,13 +202,17 @@ config timeframe = %%LOOKBACK%%
 // | filter source_ipv4 ~= "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}" or source_ipv6 ~= "(?i)[0-9a-f]*:"
 // | filter target_ipv4 ~= "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}" or target_ipv6 ~= "(?i)[0-9a-f]*:"
 //
-// Consider efficiencies of searches for a threat-intel IP based match on a destination;
-// it is unlikely to ever be an RFC1918 IP address, so exclude those.
-// Consider the topology of your network for source matches; some technologies log
-// rejected flows "reflecting" off the public edge, so decide how you want to filter
-// the source. Consider similar logic for non-network-flow-based rules.
+// Topology filter -- pick ONE of the two variants below. The bidirectional
+// variant suits NGFW / network-flow sources where source IPs may legitimately
+// be public (perimeter ingress, reflected rejects). The target-only variant
+// suits EDR / proxy / DNS sources where the source is always an internal
+// asset and only the target is interesting for indicator matching.
 //
+// (a) Bidirectional (NGFW): private source AND public target
 // | filter (is_known_private_ipv4(source_ipv4) and not is_known_private_ipv4(target_ipv4)) or (is_known_private_ipv6(source_ipv6) and not is_known_private_ipv6(target_ipv6))
+//
+// (b) Target-only (EDR / proxy): public target only
+// | filter (not is_known_private_ipv4(target_ipv4)) or (not is_known_private_ipv6(target_ipv6))
 //
 // --- Domain validation (use for domain-based hunts) ---
 // Strip trailing dots from FQDN notation and exclude internal domains
@@ -213,11 +245,12 @@ config timeframe = %%LOOKBACK%%
 (config timeframe = 24h
     | dataset = indicators
     //
-    // Filter the indicator type and verdict for your hunt.
-    // Common types: "IP", "Domain", "FileHash-SHA256", "FileHash-MD5", "Username", "URL", "SOFTWARE"
-    | filter type = "%%INDICATOR_TYPE%%" and verdict = "Malicious" and expiration_status = "active"
+    // Filter the indicator type(s) and verdict for your hunt. Both `type` and
+    // `tim_threat_intel.value` use `IN (...)` so a single-type / single-field
+    // hunt and a multi-type / multi-field hunt share one shape.
+    | filter type IN (%%INDICATOR_TYPE%%) and verdict = "Malicious" and expiration_status = "active"
     //
-    | fields value, type, verdict, expiration_status) as tim_threat_intel tim_threat_intel.value = %%MATCH_FIELD%%
+    | fields value, type, verdict, expiration_status) as tim_threat_intel tim_threat_intel.value IN (%%MATCH_FIELD%%)
 //
 // ============================================================================
 // SECTION E: TIMESTAMP AND METADATA
@@ -229,6 +262,11 @@ config timeframe = %%LOOKBACK%%
 | alter _time = current_time()
 | alter matched_dataset = "%%DATASET%%"
 | alter matched_timeframe = "%%LOOKBACK%%"
+// `matched_field` is a free-form scalar string. For single-field hunts use the
+// raw intermediary name (e.g. "target_ipv4"). For multi-field hunts use a
+// `+`-joined string listing every field that participated in the IN(...) join
+// (e.g. "target_domain+target_ipv4") so downstream consumers can attribute the
+// match.
 | alter matched_field = "%%MATCH_FIELD%%"
 | alter indicator_type = type
 | alter indicator_verdict = verdict

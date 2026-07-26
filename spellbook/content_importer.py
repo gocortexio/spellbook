@@ -18,16 +18,26 @@ import yaml
 
 
 class CorrelationImporter:
-    """Import correlation rules from JSON exports to YAML files."""
+    """Import correlation rules from JSON exports to YAML files.
+
+    Platform exports carry fields that the demisto-sdk correlation rule
+    schema rejects (the strict model forbids unknown fields, so validate
+    fails on them). Those fields are stripped here. Official content in
+    the demisto/content repository ships without them, so removal does
+    not affect platform installation.
+    """
 
     FIELDS_TO_REMOVE = {
         "rule_id",
         "simple_schedule",
         "lookup_mapping",
+        "action",
+        "alert_domain",
+        "alert_type",
+        "is_enabled",
     }
 
     FIELDS_TO_PRESERVE_NULL = {
-        "alert_type",
         "user_defined_severity",
         "user_defined_category",
     }
@@ -83,6 +93,11 @@ class CorrelationImporter:
             raise ValueError(f"Pack not found: {pack_name}")
 
         correlation_dir = pack_path / "CorrelationRules"
+        if correlation_dir.is_symlink():
+            raise ValueError(
+                "CorrelationRules directory is a symlink; refusing to write "
+                "through it to prevent path escape"
+            )
         correlation_dir.mkdir(exist_ok=True)
 
         results = []
@@ -147,6 +162,17 @@ class CorrelationImporter:
         cleaned_rule = self._clean_rule(rule)
         filename = self._generate_filename(name)
         file_path = output_dir / filename
+
+        resolved_file = file_path.resolve()
+        resolved_output_dir = output_dir.resolve()
+        try:
+            resolved_file.relative_to(resolved_output_dir)
+        except ValueError:
+            raise ValueError(
+                f"Generated file path '{file_path}' resolves outside the "
+                f"output directory '{output_dir}'; refusing to write"
+            )
+
         overwritten = file_path.exists()
 
         yaml_content = self._to_yaml(cleaned_rule)
@@ -184,6 +210,14 @@ class CorrelationImporter:
             cleaned.pop("user_defined_severity", None)
         if cleaned.get("alert_category") != "User Defined":
             cleaned.pop("user_defined_category", None)
+
+        # The schema types suppression_fields as a string; official content
+        # encodes multiple fields as a pipe-delimited list.
+        suppression_fields = cleaned.get("suppression_fields")
+        if isinstance(suppression_fields, list):
+            cleaned["suppression_fields"] = "|".join(
+                str(field) for field in suppression_fields
+            )
 
         for field_name, generator in self.FIELDS_TO_ADD.items():
             if field_name not in cleaned:

@@ -9,9 +9,12 @@ description = "A Python toolset for building, validating, and packaging Cortex P
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
-    "demisto-sdk==1.38.23",
-    "gitpython>=3.1.46",
+    "demisto-sdk==1.39.1",
+    "gitpython>=3.1.50",
     "pyyaml>=6.0.3",
+    # Pinned to the ruff version the demisto/content store pipeline uses
+    # (see spellbook/assets/ruff_parity.toml); update both together.
+    "ruff==0.8.0",
 ]
 
 [tool.hatch.version]
@@ -19,3 +22,6 @@ path = "spellbook/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["spellbook"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

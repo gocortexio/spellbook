@@ -9,6 +9,7 @@ Cortex Platform content packs.
 """
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -19,12 +20,13 @@ from pathlib import Path
 import click
 
 from spellbook import __version__
-from spellbook.pack_builder import PackBuilder
+from spellbook.pack_builder import PackBuilder, EXCLUDED_PACKS
 from spellbook.pack_template import PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
 from spellbook.xsiam_validator import XSIAMValidator
 from spellbook.content_importer import CorrelationImporter
+from spellbook.modeling_importer import ModelingRuleImporter
 from spellbook.template_renderer import (
     TemplateRenderer,
     list_templates,
@@ -34,23 +36,33 @@ from spellbook.template_renderer import (
 TASK_UUID_PATTERN = re.compile(r"^TASK_UUID_\d+$")
 
 
-PINNED_SDK_VERSION = "1.38.23"
+PINNED_SDK_VERSION = "1.39.1"
+
+# demisto-sdk declares this upload flag with an underscore, not a hyphen
+# (see demisto_sdk/commands/upload/upload_setup.py). Passing the hyphenated
+# form is rejected as an unknown option.
+SDK_UPLOAD_SKIP_VALIDATION_FLAG = "--skip_validation"
 
 
 def get_version_info():
     """Get version information for spellbook, demisto-sdk, and Python."""
-    import sys
     try:
         from importlib.metadata import version
         sdk_version = version("demisto-sdk")
     except Exception:
         sdk_version = "unknown"
-    
+
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    
+
+    if sdk_version == PINNED_SDK_VERSION:
+        sdk_note = "(PINNED)"
+    else:
+        sdk_note = f"(expected {PINNED_SDK_VERSION})"
+
     return {
         "spellbook": __version__,
         "demisto_sdk": sdk_version,
+        "demisto_sdk_note": sdk_note,
         "python": python_version
     }
 
@@ -99,6 +111,46 @@ def check_environment(config_path: str, require_packs: bool = True) -> bool:
             sys.exit(1)
     
     return True
+
+
+def discover_sample_packs(builder: PackBuilder) -> list[str]:
+    """Return built-in sample packs present in the instance.
+
+    Sample packs (currently SamplePack) are excluded from discovery, so
+    bulk operations skip them. They can still be built directly by name.
+    """
+    return [
+        p for p in EXCLUDED_PACKS
+        if (builder.packs_dir / p / "pack_metadata.json").exists()
+    ]
+
+
+def fail_no_packs(builder: PackBuilder) -> None:
+    """Report an instance with no discoverable packs and exit non-zero.
+
+    Bulk commands must not succeed silently when nothing was found: in
+    CI a missing volume mount would otherwise produce a green pipeline
+    and an empty release.
+    """
+    click.echo("")
+    click.echo(f"[ERROR] No packs found in {builder.packs_dir}")
+    click.echo("")
+    sample_packs = discover_sample_packs(builder)
+    if sample_packs:
+        click.echo(f"  Sample pack(s) present but excluded from bulk operations: {', '.join(sample_packs)}")
+        click.echo("  Sample packs can be built directly by name. To create your own pack:")
+        click.echo("")
+        click.echo("    docker run --rm -v $(pwd):/content \\")
+        click.echo("      ghcr.io/gocortexio/spellbook create MyPack")
+    else:
+        click.echo("  When using Docker, ensure you mount the content directory:")
+        click.echo("")
+        click.echo("    docker run --rm -v $(pwd):/content \\")
+        click.echo("      ghcr.io/gocortexio/spellbook <command>")
+        click.echo("")
+        click.echo("  Run this command from your content instance directory.")
+    click.echo("")
+    sys.exit(1)
 
 
 def run_xsiam_validation(packs_dir: Path, pack_name: str) -> None:
@@ -405,7 +457,7 @@ def cli(ctx):
         click.echo("  Cortex Platform Content Pack Builder")
         click.echo("")
         click.echo(f"  spellbook-version: {versions['spellbook']}")
-        click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']} (PINNED)")
+        click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']} {versions['demisto_sdk_note']}")
         click.echo(f"  python-version: {versions['python']}")
         click.echo("")
         click.echo("  Run 'spellbook.py --help' for available commands.")
@@ -498,21 +550,32 @@ def list_packs(config):
     """List all discovered content packs."""
     click.echo(f"Spellbook v{__version__}")
     click.echo("")
+    check_environment(config)
     builder = PackBuilder(config)
     packs = builder.discover_packs()
+    sample_packs = discover_sample_packs(builder)
 
-    if not packs:
+    if not packs and not sample_packs:
         click.echo("No packs found.")
         return
 
-    click.echo(f"Found {len(packs)} pack(s):\n")
-    for pack in packs:
-        metadata = builder.read_pack_metadata(pack)
-        version = metadata.get("currentVersion", "unknown")
-        description = metadata.get("description", "")[:50]
-        click.echo(f"  - {pack} (v{version})")
-        if description:
-            click.echo(f"    {description}...")
+    if packs:
+        click.echo(f"Found {len(packs)} pack(s):\n")
+        for pack in packs:
+            metadata = builder.read_pack_metadata(pack)
+            version = metadata.get("currentVersion", "unknown")
+            description = metadata.get("description", "")[:50]
+            click.echo(f"  - {pack} (v{version})")
+            if description:
+                click.echo(f"    {description}...")
+    else:
+        click.echo("No packs found.")
+
+    if sample_packs:
+        click.echo("")
+        click.echo("Sample pack(s), excluded from bulk build and validation:\n")
+        for pack in sample_packs:
+            click.echo(f"  - {pack} (build directly with: build {pack})")
 
 
 @cli.command()
@@ -542,11 +605,15 @@ def build(pack_name, build_all, validate, config):
     all discovered packs. The version is read from pack_metadata.json.
     """
     click.echo(f"Spellbook v{__version__}")
+    check_environment(config)
     builder = PackBuilder(config)
 
     if build_all:
+        packs = builder.discover_packs()
+        if not packs:
+            fail_no_packs(builder)
         if validate:
-            for pack in builder.discover_packs():
+            for pack in packs:
                 run_xsiam_validation(builder.packs_dir, pack)
         results = builder.build_all_packs(validate=validate)
         success = sum(1 for r in results.values() if r is not None)
@@ -577,6 +644,7 @@ def build(pack_name, build_all, validate, config):
 )
 def validate(pack_name, config):
     """Validate a content pack using demisto-sdk and XSIAM checks."""
+    check_environment(config)
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
     
@@ -607,12 +675,12 @@ def validate(pack_name, config):
 )
 def validate_all(config):
     """Validate all discovered content packs using demisto-sdk and XSIAM checks."""
+    check_environment(config)
     builder = PackBuilder(config)
     packs = builder.discover_packs()
 
     if not packs:
-        click.echo("No packs found.")
-        return
+        fail_no_packs(builder)
 
     xsiam_validator = XSIAMValidator(builder.packs_dir)
     failed = []
@@ -661,18 +729,30 @@ def validate_all(config):
     help="Template to use for pack creation."
 )
 @click.option(
+    "--no-author-image",
+    is_flag=True,
+    default=False,
+    help="Do not scaffold the bundled author image (Author_image.png)."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def create(pack_name, description, author, template, config):
-    """Create a new content pack from template."""
+def create(pack_name, description, author, template, no_author_image, config):
+    """Create a new content pack from template.
+
+    Scaffolds a placeholder Author_image.png at the pack root by default; use
+    --no-author-image to skip it, or replace the file with your own branding.
+    """
     template_gen = PackTemplate(config)
     pack_path = template_gen.create_from_template(
         template,
         pack_name,
-        description
+        description,
+        author=author,
+        include_author_image=not no_author_image
     )
     click.echo(f"[OK] Created pack at: {pack_path}")
 
@@ -742,8 +822,8 @@ def set_version(pack_name, new_version, tag, message, config):
         click.echo("  Version must match format X.Y.Z where X, Y, Z are integers.")
         click.echo("")
         click.echo("  Examples:")
-        click.echo("    gocortex-spellbook set-version MyPack 2.0.0")
-        click.echo("    gocortex-spellbook set-version MyPack v2.0.0")
+        click.echo("    python spellbook.py set-version MyPack 2.0.0")
+        click.echo("    python spellbook.py set-version MyPack v2.0.0")
         click.echo("")
         sys.exit(1)
     
@@ -753,7 +833,7 @@ def set_version(pack_name, new_version, tag, message, config):
         click.echo("  The --message flag is only valid when creating a Git commit.")
         click.echo("")
         click.echo("  Usage:")
-        click.echo("    gocortex-spellbook set-version MyPack 2.0.0 --tag --message \"Your message\"")
+        click.echo("    python spellbook.py set-version MyPack 2.0.0 --tag --message \"Your message\"")
         click.echo("")
         sys.exit(1)
     
@@ -765,7 +845,7 @@ def set_version(pack_name, new_version, tag, message, config):
     builder.update_pack_version(pack_name, clean_version)
     click.echo(f"[OK] Set {pack_name} version to {clean_version}")
 
-    pack_path = builder.packs_dir / pack_name
+    pack_path = builder.get_pack_path(pack_name)
     create_release_notes(pack_name, clean_version, pack_path, message, tag)
 
     run_xsiam_validation(builder.packs_dir, pack_name)
@@ -830,7 +910,7 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
         click.echo("  The --message flag is only valid when creating a Git commit.")
         click.echo("")
         click.echo("  Usage:")
-        click.echo("    gocortex-spellbook bump-version MyPack --tag --message \"Your message\"")
+        click.echo("    python spellbook.py bump-version MyPack --tag --message \"Your message\"")
         click.echo("")
         sys.exit(1)
     
@@ -873,7 +953,7 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
     builder.update_pack_version(pack_name, new_version)
     click.echo(f"[OK] Bumped {pack_name} from {current_version} to {new_version}")
 
-    pack_path = builder.packs_dir / pack_name
+    pack_path = builder.get_pack_path(pack_name)
     create_release_notes(pack_name, new_version, pack_path, message, tag)
 
     run_xsiam_validation(builder.packs_dir, pack_name)
@@ -902,36 +982,12 @@ def rename_content(pack_name, config):
     click.echo("[INFO] The rename-content command is temporarily unavailable.")
     click.echo("")
     click.echo("This command is being improved to handle additional edge cases.")
-    click.echo("For now, please rename content items manually.")
+    click.echo("For now, please rename content items manually:")
+    click.echo("  1. Rename folders and files to match the pack name")
+    click.echo("  2. Update id, name, rules, and schema/samples fields in YAML files")
+    click.echo("  3. Update vendor, product, and target_dataset in XIF files")
+    click.echo("  4. Update dataset references in correlation rule XQL queries")
     sys.exit(0)
-
-    builder = PackBuilder(config)
-    builder.validate_pack_exists(pack_name)
-
-    mismatched = builder.check_content_naming(pack_name)
-    if not mismatched:
-        click.echo(f"[OK] All content items in {pack_name} already match the pack name")
-        return
-
-    click.echo(f"Found {len(mismatched)} mismatched content item(s):")
-    for item in mismatched:
-        click.echo(f"  - {item}")
-    click.echo("")
-
-    try:
-        renamed = builder.rename_content(pack_name)
-        if renamed:
-            click.echo(f"[OK] Renamed {len(renamed)} item(s):")
-            for old, new in renamed.items():
-                click.echo(f"  {old} -> {new}")
-            click.echo("")
-            click.echo("Content has been updated. You should now rebuild the pack:")
-            click.echo(f"  gocortex-spellbook build {pack_name}")
-        else:
-            click.echo("[OK] No items needed renaming")
-    except FileNotFoundError as e:
-        click.echo(f"[ERROR] {e}")
-        sys.exit(1)
 
 
 @cli.command()
@@ -964,12 +1020,18 @@ def rename_content(pack_name, config):
     help="Skip pack validation before upload."
 )
 @click.option(
+    "--strict-marketplace",
+    is_flag=True,
+    default=False,
+    help="Treat marketplace mismatches between the chosen flag and pack_metadata.json as errors instead of warnings."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
+def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketplace, config):
     """Upload a content pack to Cortex Platform.
 
     PACK_PATH must be a pack directory (e.g., Packs/MyPack).
@@ -1043,7 +1105,7 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
         click.echo("")
         sys.exit(1)
 
-    input_file = Path(pack_path)
+    input_file = Path(pack_path).resolve()
     if not input_file.exists():
         click.echo(f"[ERROR] Path not found: {pack_path}")
         sys.exit(1)
@@ -1059,6 +1121,14 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
 
     pack_name = input_file.name
     builder = PackBuilder(config)
+    try:
+        input_file.relative_to(builder.packs_dir.resolve())
+    except ValueError:
+        click.echo(f"[ERROR] Pack path '{pack_path}' is not inside the configured packs directory")
+        click.echo(f"        Packs directory: {builder.packs_dir}")
+        click.echo("")
+        click.echo("Usage: upload Packs/MyPack --platform")
+        sys.exit(1)
     mismatched = builder.check_content_naming(pack_name)
     if mismatched:
         click.echo(f"[WARN] Content naming mismatch: {pack_name} has items with different names")
@@ -1067,9 +1137,9 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
         if len(mismatched) > 5:
             click.echo(f"  ... and {len(mismatched) - 5} more")
         click.echo("")
-        click.echo("This may cause upload to fail. To fix, run:")
-        click.echo(f"  gocortex-spellbook rename-content {pack_name}")
-        click.echo(f"  gocortex-spellbook build {pack_name}")
+        click.echo("This may cause upload to fail. Rename the mismatched items so that")
+        click.echo(f"folders, files, and internal id/name fields start with '{pack_name}',")
+        click.echo(f"then rebuild with: python spellbook.py build {pack_name}")
         click.echo("")
 
     content_root = input_file.parent.parent.resolve()
@@ -1103,6 +1173,52 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
             click.echo(f"[WARN] Could not initialise git repository: {e}")
 
     if not skip_validation:
+        expected_marketplace = None
+        if platform:
+            expected_marketplace = "platform"
+        elif xsiam:
+            expected_marketplace = "marketplacev2"
+
+        if expected_marketplace:
+            metadata_path = input_file / "pack_metadata.json"
+            pack_marketplaces = None
+            metadata_readable = False
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, "r", encoding="utf-8-sig") as f:
+                        metadata = json.loads(f.read() or "{}")
+                    metadata_readable = True
+                    raw = metadata.get("marketplaces")
+                    if isinstance(raw, list):
+                        pack_marketplaces = [str(m) for m in raw]
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+                    click.echo(f"[WARN] Could not read {metadata_path} for marketplace pre-flight check: {e}")
+
+            mismatched = (
+                metadata_readable
+                and (pack_marketplaces is None or expected_marketplace not in pack_marketplaces)
+            )
+
+            if mismatched:
+                flag_name = "--platform" if platform else "--xsiam"
+                level = "ERROR" if strict_marketplace else "WARN"
+                if pack_marketplaces is None:
+                    detail = "pack_metadata.json has no 'marketplaces' array (or it is not a list)"
+                else:
+                    detail = f"marketplaces={pack_marketplaces} does not include '{expected_marketplace}'"
+                click.echo(
+                    f"[{level}] Marketplace mismatch: pack '{pack_name}' {detail} (required by {flag_name})."
+                )
+                click.echo(
+                    f"        demisto-sdk will silently filter content not tagged for '{expected_marketplace}' at upload time."
+                )
+                click.echo(
+                    f"        Add \"{expected_marketplace}\" to the 'marketplaces' array in {metadata_path} before uploading."
+                )
+                if strict_marketplace:
+                    click.echo("        Re-run without --strict-marketplace to downgrade this to a warning.")
+                    sys.exit(1)
+
         run_xsiam_validation(input_file.parent, pack_name)
 
     cmd = ["demisto-sdk", "upload", "-i", str(input_file), "-z"]
@@ -1114,9 +1230,10 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
 
     if insecure:
         cmd.append("--insecure")
+        click.echo("[WARN] Certificate validation: disabled (--insecure)")
 
     if skip_validation:
-        cmd.append("--skip-validation")
+        cmd.append(SDK_UPLOAD_SKIP_VALIDATION_FLAG)
 
     click.echo(f"Uploading {pack_path}...")
     click.echo(f"Target: {base_url}")
@@ -1125,7 +1242,7 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
         env = os.environ.copy()
         env["CONTENT_PATH"] = str(content_root)
         env["DEMISTO_SDK_CONTENT_PATH"] = str(content_root)
-        
+
         result = subprocess.run(cmd, check=False, env=env, cwd=str(content_root))
         if result.returncode == 0:
             click.echo("[OK] Upload completed")
@@ -1141,8 +1258,8 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, config):
             try:
                 import shutil
                 shutil.rmtree(git_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                click.echo(f"[WARN] Failed to clean temporary git dir: {e}")
 
 
 @cli.command(name="check-init")
@@ -1168,7 +1285,7 @@ def check_init(config):
     click.echo("Version Information")
     click.echo("-------------------")
     click.echo(f"  spellbook-version: {versions['spellbook']}")
-    click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']}")
+    click.echo(f"  demisto-sdk-version: {versions['demisto_sdk']} {versions['demisto_sdk_note']}")
     click.echo(f"  python-version: {versions['python']}")
     click.echo("")
     
@@ -1297,6 +1414,7 @@ def summon():
     \b
     Import from exports:
         cat export.json | spellbook summon correlation MyPack
+        cat rule.xif | spellbook summon datamodel MyPack
 
     \b
     Generate from templates:
@@ -1387,6 +1505,105 @@ def summon_correlation(pack_name, config):
         failed = len(results) - success_count
         click.echo(f"[WARN] Summoned {success_count} rule(s), {failed} failed")
         sys.exit(1)
+
+
+@summon.command("datamodel")
+@click.argument("pack_name")
+@click.option(
+    "--name",
+    "name",
+    default=None,
+    help="Base name for the rule (default: derived from the dataset). "
+         "The 'ModelingRule' suffix is appended automatically."
+)
+@click.option(
+    "--minimal-schema",
+    is_flag=True,
+    default=False,
+    help="Emit only _raw_log in the schema instead of inferring columns."
+)
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def summon_datamodel(pack_name, name, minimal_schema, config):
+    """Import a data model rule from XIF text.
+
+    Reads raw XIF rule text from stdin (piped input or interactive paste
+    followed by Ctrl+D) and creates a modelling rule package in the pack's
+    ModelingRules directory.
+
+    The input must start with a [MODEL: dataset="..."] header, as copied from
+    the tenant rule editor. Three files are written and kept stem-aligned so
+    demisto-sdk binds them together: the rule YAML, the XIF, and the schema.
+
+    The package is named after the dataset by default (for example
+    cloudflare_account_audit_raw becomes CloudflareAccountAudit), so a pack can
+    hold many rules without collision. Use --name to override the base name.
+
+    Schema columns are inferred from the fields the rule reads but never
+    assigns. Review the inferred types before uploading.
+
+    Example:
+      cat rule.xif | spellbook summon datamodel MyPack
+      spellbook summon datamodel MyPack < rule.xif
+    """
+    check_environment(config)
+    builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
+
+    click.echo(f"Spellbook v{__version__}")
+    click.echo("")
+    click.echo(f"Summoning data model rule into {pack_name}...")
+    click.echo("Reading from stdin (paste XIF, then Ctrl+D to finish)")
+    click.echo("")
+
+    try:
+        xif_content = sys.stdin.read()
+    except KeyboardInterrupt:
+        click.echo("")
+        click.echo("[INFO] Cancelled")
+        sys.exit(0)
+
+    if not xif_content.strip():
+        click.echo("[ERROR] No input received")
+        click.echo("")
+        click.echo("  Pipe XIF content or paste and press Ctrl+D:")
+        click.echo("    cat rule.xif | spellbook summon datamodel MyPack")
+        click.echo("")
+        sys.exit(1)
+
+    importer = ModelingRuleImporter(builder.packs_dir)
+
+    try:
+        result = importer.import_from_xif(
+            xif_content,
+            pack_name,
+            name=name,
+            minimal_schema=minimal_schema,
+        )
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+
+    click.echo(f"[INFO] Dataset(s): {', '.join(result['datasets'])}")
+    click.echo(f"[INFO] Package: ModelingRules/{result['stem']}")
+    click.echo("")
+
+    for file_result in result["files"]:
+        location = f"ModelingRules/{result['stem']}/{file_result['filename']}"
+        if file_result["overwritten"]:
+            click.echo(f"[WARN] Overwrote: {location}")
+        else:
+            click.echo(f"[OK] Created: {location}")
+
+    for warning in result["warnings"]:
+        click.echo(f"[WARN] {warning}")
+
+    click.echo("")
+    click.echo(f"[OK] Summoned data model rule to {pack_name}")
 
 
 @summon.command("template")
@@ -1543,7 +1760,7 @@ def summon_template(template_name, pack_name, token_values, list_mode, config):
         click.echo("")
 
     if "TEMPLATE_HASH" in auto_token_set:
-        author = builder.config.get("author", "")
+        author = (builder.config.get("defaults") or {}).get("author", "")
         dataset = values.get("DATASET", "")
         lookback = values.get("LOOKBACK", "")
         hash_input = f"{author}:{dataset}:{lookback}"

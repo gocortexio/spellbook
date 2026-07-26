@@ -8,11 +8,19 @@ Creates new content pack scaffolding from templates.
 
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 
 import click
 import yaml
+
+
+# The author image is bundled inside the package so it ships in both the
+# container (COPY spellbook/) and the wheel. demisto-sdk auto-detects an
+# author image at the pack root named Author_image.png.
+AUTHOR_IMAGE_FILENAME = "Author_image.png"
+AUTHOR_IMAGE_SOURCE = Path(__file__).parent / "assets" / AUTHOR_IMAGE_FILENAME
 
 
 class PackTemplate:
@@ -56,7 +64,16 @@ class PackTemplate:
             config_path: Path to the spellbook configuration file.
         """
         self.config = self._load_config(config_path)
-        self.packs_dir = Path(self.config.get("packs_directory", "Packs"))
+        self._repo_root = Path(config_path).resolve().parent
+        raw_packs_dir = self.config.get("packs_directory", "Packs")
+        resolved_packs = (self._repo_root / raw_packs_dir).resolve()
+        try:
+            resolved_packs.relative_to(self._repo_root)
+        except ValueError:
+            raise ValueError(
+                f"packs_directory '{raw_packs_dir}' resolves outside the content repository"
+            )
+        self.packs_dir = resolved_packs
         self.defaults = self.config.get("defaults", {})
 
     def _load_config(self, config_path: str) -> dict:
@@ -73,7 +90,8 @@ class PackTemplate:
         description: str = "",
         author: str | None = None,
         categories: list[str] | None = None,
-        create_directories: list[str] | None = None
+        create_directories: list[str] | None = None,
+        include_author_image: bool = True
     ) -> Path:
         """
         Create a new pack with standard structure.
@@ -84,11 +102,19 @@ class PackTemplate:
             author: Author name (uses default if not provided).
             categories: List of categories.
             create_directories: Specific directories to create.
+            include_author_image: Scaffold the bundled author image at the
+                pack root.
 
         Returns:
             Path to the created pack directory.
         """
-        pack_path = self.packs_dir / pack_name
+        pack_path = (self.packs_dir / pack_name).resolve()
+        try:
+            pack_path.relative_to(self.packs_dir)
+        except ValueError:
+            raise ValueError(
+                f"pack_name '{pack_name}' resolves outside the packs directory"
+            )
         pack_path.mkdir(parents=True, exist_ok=True)
 
         self._create_metadata(
@@ -105,6 +131,9 @@ class PackTemplate:
 
         self._create_secrets_ignore(pack_path)
 
+        if include_author_image:
+            self._create_author_image(pack_path)
+
         directories = create_directories or self.CONTENT_DIRECTORIES
         for directory in directories:
             dir_path = pack_path / directory
@@ -114,6 +143,19 @@ class PackTemplate:
 
         click.echo(f"Created pack: {pack_path}")
         return pack_path
+
+    def _create_author_image(self, pack_path: Path) -> None:
+        """Copy the bundled author image to the pack root as Author_image.png.
+
+        Skips silently if the bundled asset is missing, and does not overwrite
+        an existing author image.
+        """
+        if not AUTHOR_IMAGE_SOURCE.exists():
+            return
+        target = pack_path / AUTHOR_IMAGE_FILENAME
+        if target.exists():
+            return
+        shutil.copyfile(AUTHOR_IMAGE_SOURCE, target)
 
     def _create_metadata(
         self,
@@ -278,15 +320,12 @@ For support, please refer to the pack metadata for contact information.
         dataset = f"{vendor}_raw"
         global_id = str(uuid.uuid4())
 
-        rule_yml = f"""action: ALERTS
-alert_category: CREDENTIAL_ACCESS
+        rule_yml = f"""alert_category: CREDENTIAL_ACCESS
 alert_description: Multiple failed login attempts detected from $xdm.source.ipv4 targeting $xdm.target.user.username which may indicate a brute force attack.
-alert_domain: DOMAIN_SECURITY
 alert_fields:
   actor_effective_username: xdm.source.user.username
   agent_hostname: xdm.source.host.hostname
 alert_name: {pack_name} - Brute Force Attack Detected
-alert_type: null
 dataset: alerts
 description: Detects multiple failed authentication attempts from a single source within a short time window indicating a potential brute force attack.
 drilldown_query_timeframe: ALERT
@@ -294,7 +333,6 @@ execution_mode: REAL_TIME
 fromversion: 8.4.0
 global_rule_id: {global_id}
 investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
-is_enabled: true
 mapping_strategy: CUSTOM
 mitre_defs:
   TA0006 - Credential Access:
@@ -303,9 +341,7 @@ name: {rule_name}
 severity: SEV_030_MEDIUM
 suppression_duration: 1 hours
 suppression_enabled: true
-suppression_fields:
-  - xdm.source.ipv4
-  - xdm.target.user.username
+suppression_fields: xdm.source.ipv4|xdm.target.user.username
 xql_query: |
   datamodel dataset = {dataset}
   | filter xdm.event.type = "AUTHENTICATION" and xdm.event.outcome = "FAILED"
@@ -329,15 +365,12 @@ xql_query: |
         rule_name = f"{pack_name} - Multiple Failed Login Attempts-Scheduled"
         global_id = str(uuid.uuid4())
 
-        rule_yml = f"""action: ALERTS
-alert_category: CREDENTIAL_ACCESS
+        rule_yml = f"""alert_category: CREDENTIAL_ACCESS
 alert_description: Multiple failed login attempts detected from $xdm.source.ipv4 targeting $xdm.target.user.username which may indicate a brute force attack.
-alert_domain: DOMAIN_SECURITY
 alert_fields:
   actor_effective_username: xdm.source.user.username
   agent_hostname: xdm.source.host.hostname
 alert_name: {pack_name} - Brute Force Attack Detected-Scheduled
-alert_type: null
 crontab: '*/10 * * * *'
 dataset: alerts
 description: Detects multiple failed authentication attempts from a single source using scheduled execution. Runs every 10 minutes with a 15 minute search window.
@@ -346,7 +379,6 @@ execution_mode: SCHEDULED
 fromversion: 8.4.0
 global_rule_id: {global_id}
 investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
-is_enabled: true
 mapping_strategy: CUSTOM
 mitre_defs:
   TA0006 - Credential Access:
@@ -356,9 +388,7 @@ search_window: 15 minutes
 severity: SEV_030_MEDIUM
 suppression_duration: 1 hours
 suppression_enabled: true
-suppression_fields:
-  - xdm.source.ipv4
-  - xdm.target.user.username
+suppression_fields: xdm.source.ipv4|xdm.target.user.username
 xql_query: |
   datamodel dataset = {dataset}
   | filter xdm.event.type = "AUTHENTICATION" and xdm.event.outcome = "FAILED"
@@ -380,7 +410,9 @@ xql_query: |
         rules_dir = pack_path / "ParsingRules" / f"{pack_name}ParsingRules"
         rules_dir.mkdir(parents=True, exist_ok=True)
 
-        rule_id = f"{pack_name} Parsing Rule"
+        # Validator PR101 requires the id to end with 'ParsingRule' and the
+        # name to end with 'Parsing Rule'.
+        rule_id = f"{pack_name}ParsingRule"
         rule_file_base = f"{pack_name}ParsingRules"
         vendor = pack_name.lower()
         dataset = f"{vendor}_raw"
@@ -425,8 +457,10 @@ filter _raw_log ~= "\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}"
         vendor = pack_name.lower()
         dataset = f"{vendor}_raw"
 
+        # Validator MR108 requires the id to end with 'ModelingRule' and the
+        # name to end with 'Modeling Rule'.
         rule_yml = f"""fromversion: 6.10.0
-id: {pack_name}
+id: {pack_name}ModelingRule
 name: {pack_name} Modeling Rule
 rules: ''
 schema: ''
@@ -560,7 +594,9 @@ alter
             "name": dashboard_name
         }
         
-        dashboard_path = dashboards_dir / f"{pack_name}ExampleDashboard.json"
+        # The store rejects depth-one XSIAM filenames that do not start with
+        # "<PackFolder>_" (demisto-sdk XSIAM_DEPTH_1_CHECKS).
+        dashboard_path = dashboards_dir / f"{pack_name}_ExampleDashboard.json"
         with open(dashboard_path, "w", encoding="utf-8") as f:
             json.dump(dashboard_data, f, indent=2)
             f.write("\n")
@@ -612,7 +648,8 @@ alter
             "name": report_name
         }
         
-        report_path = reports_dir / f"{pack_name}ExampleReport.json"
+        # See the dashboard note above: the "<PackFolder>_" prefix is required.
+        report_path = reports_dir / f"{pack_name}_ExampleReport.json"
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(report_data, f, indent=2)
             f.write("\n")
@@ -677,7 +714,9 @@ alter
         self,
         template_name: str,
         pack_name: str,
-        description: str = ""
+        description: str = "",
+        author: str | None = None,
+        include_author_image: bool = True
     ) -> Path:
         """
         Create a pack from a predefined template.
@@ -686,6 +725,9 @@ alter
             template_name: Name of the template to use.
             pack_name: Name of the pack.
             description: Pack description.
+            author: Pack author (uses the configured default if not provided).
+            include_author_image: Scaffold the bundled author image at the
+                pack root.
 
         Returns:
             Path to the created pack.
@@ -701,5 +743,7 @@ alter
         return self.create_pack(
             pack_name,
             description,
-            create_directories=directories
+            author=author,
+            create_directories=directories,
+            include_author_image=include_author_image
         )

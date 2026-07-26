@@ -111,6 +111,26 @@ class TemplateRenderer:
         if not self.template_dir.is_dir():
             raise ValueError(f"Template not found: {template_name}")
 
+    def _iter_template_files(self):
+        """Yield non-symlink template files that resolve within template_dir.
+
+        Used by token discovery methods to ensure no symlinked or out-of-bounds
+        files are read during scanning.
+        """
+        resolved_root = self.template_dir.resolve()
+        for path in self.template_dir.rglob("*"):
+            if path.is_symlink():
+                continue
+            if not path.is_file():
+                continue
+            if path.name in JUNK_FILES:
+                continue
+            try:
+                path.resolve().relative_to(resolved_root)
+            except ValueError:
+                continue
+            yield path
+
     def discover_tokens(self) -> list[str]:
         """Scan all template files and return user-facing token names.
 
@@ -120,13 +140,12 @@ class TemplateRenderer:
         """
         tokens = set()
         xql_tokens = self._discover_xql_tokens()
-        for path in self.template_dir.rglob("*"):
-            if path.is_file() and path.name not in JUNK_FILES:
-                try:
-                    content = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    continue
-                tokens.update(TOKEN_PATTERN.findall(content))
+        for path in self._iter_template_files():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            tokens.update(TOKEN_PATTERN.findall(content))
         return sorted(tokens - xql_tokens)
 
     def discover_auto_tokens(self) -> list[str]:
@@ -137,19 +156,25 @@ class TemplateRenderer:
         supplied by the user via ``--set``.
         """
         tokens = set()
-        for path in self.template_dir.rglob("*"):
-            if path.is_file() and path.name not in JUNK_FILES:
-                try:
-                    content = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    continue
-                tokens.update(AUTO_TOKEN_PATTERN.findall(content))
+        for path in self._iter_template_files():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            tokens.update(AUTO_TOKEN_PATTERN.findall(content))
         return sorted(tokens)
 
     def _discover_xql_tokens(self) -> set[str]:
         """Return the set of internal token names derived from .xql filenames."""
+        resolved_root = self.template_dir.resolve()
         xql_tokens = set()
         for xql_path in self.template_dir.rglob(f"*{XQL_EXTENSION}"):
+            if xql_path.is_symlink():
+                continue
+            try:
+                xql_path.resolve().relative_to(resolved_root)
+            except ValueError:
+                continue
             xql_tokens.add(xql_path.stem)
         return xql_tokens
 
@@ -157,7 +182,14 @@ class TemplateRenderer:
         """Return content type subfolders present in this template."""
         types = []
         for entry in sorted(self.template_dir.iterdir()):
-            if entry.is_dir() and entry.name in CONTENT_TYPE_DIRS:
+            if entry.name not in CONTENT_TYPE_DIRS:
+                continue
+            if entry.is_symlink():
+                raise ValueError(
+                    f"Template content-type directory '{entry.name}' is a symlink; "
+                    f"refusing to read through it to prevent path escape"
+                )
+            if entry.is_dir():
                 types.append(entry.name)
         return types
 
@@ -206,6 +238,13 @@ class TemplateRenderer:
         re-running summon stays byte-identical.
         """
         fragment_path = self.template_dir / PACK_IGNORE_TEMPLATE_NAME
+        if not fragment_path.exists():
+            return
+        if fragment_path.is_symlink():
+            raise ValueError(
+                f"Template file '{PACK_IGNORE_TEMPLATE_NAME}' is a symlink; "
+                f"refusing to read through it to prevent path escape"
+            )
         if not fragment_path.is_file():
             return
 
@@ -223,6 +262,20 @@ class TemplateRenderer:
             return
 
         target = pack_dir / PACK_IGNORE_FILE
+        if target.is_symlink():
+            raise ValueError(
+                f"Pack file '{PACK_IGNORE_FILE}' is a symlink; "
+                f"refusing to read or write through it to prevent path escape"
+            )
+        resolved_target = target.resolve()
+        resolved_pack = pack_dir.resolve()
+        try:
+            resolved_target.relative_to(resolved_pack)
+        except ValueError:
+            raise ValueError(
+                f"Pack file '{PACK_IGNORE_FILE}' resolves outside pack directory "
+                f"'{pack_dir}'; refusing to read or write"
+            )
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
 
         new_blocks = []
@@ -249,10 +302,25 @@ class TemplateRenderer:
     ) -> list[dict]:
         """Render all template files for a single content type."""
         source_dir = self.template_dir / content_type
+        resolved_source_dir = source_dir.resolve()
         results = []
 
         xql_snippets: dict[str, str] = {}
         for xql_file in sorted(source_dir.glob(f"*{XQL_EXTENSION}")):
+            if xql_file.is_symlink():
+                raise ValueError(
+                    f"Template file '{xql_file.name}' in "
+                    f"'{self.template_name}/{content_type}' is a symlink; "
+                    f"refusing to read through it to prevent path escape"
+                )
+            try:
+                xql_file.resolve().relative_to(resolved_source_dir)
+            except ValueError:
+                raise ValueError(
+                    f"Template file '{xql_file.name}' in "
+                    f"'{self.template_name}/{content_type}' resolves outside "
+                    f"the template directory; refusing to read it"
+                )
             token_name = xql_file.stem
             try:
                 xql_raw = xql_file.read_text(encoding="utf-8")
@@ -266,7 +334,7 @@ class TemplateRenderer:
                 xql_raw, values
             ).strip()
 
-        for template_file in sorted(source_dir.iterdir()):
+        for template_file in sorted(source_dir.rglob("*")):
             if not template_file.is_file():
                 continue
             if template_file.suffix == XQL_EXTENSION:
@@ -274,8 +342,36 @@ class TemplateRenderer:
             if template_file.name in JUNK_FILES:
                 continue
 
+            if template_file.is_symlink():
+                raise ValueError(
+                    f"Template file '{template_file.name}' in "
+                    f"'{self.template_name}/{content_type}' is a symlink; "
+                    f"refusing to read through it to prevent path escape"
+                )
+            try:
+                template_file.resolve().relative_to(resolved_source_dir)
+            except ValueError:
+                raise ValueError(
+                    f"Template file '{template_file.name}' in "
+                    f"'{self.template_name}/{content_type}' resolves outside "
+                    f"the template directory; refusing to read it"
+                )
+
+            rel_parent = template_file.parent.relative_to(source_dir)
+            rendered_parts = []
+            for part in rel_parent.parts:
+                rendered = self._replace_tokens(part, values)
+                self._validate_path_segment(rendered, context=f"token-expanded directory '{part}'")
+                rendered_parts.append(rendered)
+            rendered_subdir = Path(*rendered_parts) if rendered_parts else Path()
+
             result = self._render_file(
-                template_file, content_type, values, pack_dir, xql_snippets
+                template_file,
+                content_type,
+                values,
+                pack_dir,
+                xql_snippets,
+                rendered_subdir,
             )
             results.append(result)
 
@@ -288,6 +384,7 @@ class TemplateRenderer:
         values: dict[str, str],
         pack_dir: Path,
         xql_snippets: dict[str, str],
+        rendered_subdir: Path = Path(),
     ) -> dict:
         """Render a single template file and write to the pack."""
         try:
@@ -338,20 +435,89 @@ class TemplateRenderer:
         if prefix and not filename.startswith(prefix):
             filename = prefix + filename
 
-        output_dir = pack_dir / content_type
-        output_dir.mkdir(exist_ok=True)
+        self._validate_path_segment(filename, context=f"rendered filename '{filename}'")
+
+        output_dir = pack_dir / content_type / rendered_subdir
+
+        self._assert_no_symlink_in_output_path(output_dir, pack_dir)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
         file_path = output_dir / filename
+
+        resolved_file = file_path.resolve()
+        resolved_pack = pack_dir.resolve()
+        try:
+            resolved_file.relative_to(resolved_pack)
+        except ValueError:
+            raise ValueError(
+                f"Output path '{file_path}' resolves outside pack directory "
+                f"'{pack_dir}'; refusing to write"
+            )
 
         overwritten = file_path.exists()
         file_path.write_text(output_content, encoding="utf-8")
 
+        display_filename = (
+            str(rendered_subdir / filename)
+            if str(rendered_subdir) not in ("", ".")
+            else filename
+        )
+
         return {
             "content_type": content_type,
             "name": name,
-            "filename": filename,
+            "filename": display_filename,
             "path": str(file_path),
             "overwritten": overwritten,
         }
+
+    def _validate_path_segment(self, segment: str, context: str = "") -> None:
+        """Raise ValueError if a token-expanded path segment is unsafe.
+
+        Rejects empty segments, dotdot traversals, and segments that contain
+        path separators or are absolute paths — all of which could cause
+        writes to escape the intended pack directory.
+        """
+        if not segment:
+            raise ValueError(
+                f"Token expansion produced an empty path segment"
+                + (f" ({context})" if context else "")
+            )
+        if segment in ("..", "."):
+            raise ValueError(
+                f"Token expansion produced a path traversal segment: {segment!r}"
+                + (f" ({context})" if context else "")
+            )
+        if "/" in segment or "\\" in segment:
+            raise ValueError(
+                f"Token expansion produced a path separator in segment: {segment!r}"
+                + (f" ({context})" if context else "")
+            )
+        if Path(segment).is_absolute():
+            raise ValueError(
+                f"Token expansion produced an absolute path segment: {segment!r}"
+                + (f" ({context})" if context else "")
+            )
+
+    def _assert_no_symlink_in_output_path(self, output_dir: Path, root: Path) -> None:
+        """Raise ValueError if any component of output_dir under root is a symlink.
+
+        Walks each path component from root down to output_dir and rejects
+        any component that is already a symlink, preventing writes from
+        following an attacker-placed symlink to escape the pack directory.
+        """
+        try:
+            rel = output_dir.relative_to(root)
+        except ValueError:
+            return
+        current = root
+        for part in rel.parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(
+                    f"Output path component '{current}' is a symlink; "
+                    f"refusing to write through it to prevent path escape"
+                )
 
     def _replace_tokens(self, text: str, values: dict[str, str]) -> str:
         """Replace %%TOKEN%% and @@TOKEN@@ placeholders in a string.
