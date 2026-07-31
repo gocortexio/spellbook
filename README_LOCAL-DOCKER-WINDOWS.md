@@ -131,7 +131,7 @@ branding.
 
 ## Validate
 
-Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff using the official demisto/content store ruleset.
+Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff and have their unit tests run, using the official demisto/content store setup. Note this means validate executes your pack's test code.
 
 ### PowerShell
 

@@ -28,7 +28,7 @@ The demisto-sdk has many features and validation rules. Spellbook wraps it in a 
 - Multi-pack support within a single content instance
 - Import of tenant-authored content via `summon correlation` and `summon datamodel`
 - Token-based template generation via `summon template` (e.g. `intel_retrohunt`, `parsing_modeling`)
-- Validation using demisto-sdk, plus ruff linting of Python content with the official demisto/content store ruleset
+- Validation using demisto-sdk, plus ruff linting and unit-test execution for Python content, matching the official demisto/content store setup
 - Automated packaging into distributable zip files
 - Direct upload to Cortex Platform instances
 

@@ -638,7 +638,11 @@ def copy_builtin_templates(target_dir: Path) -> int:
         if entry.is_dir() and not entry.name.startswith("_"):
             dest = target_dir / entry.name
             if not dest.exists():
-                shutil.copytree(entry, dest)
+                # Filter OS junk so it never reaches a user's instance, even
+                # if it is present in the source tree.
+                shutil.copytree(
+                    entry, dest, ignore=shutil.ignore_patterns(*JUNK_FILES)
+                )
                 count += 1
 
     return count

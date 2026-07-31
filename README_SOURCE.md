@@ -166,7 +166,7 @@ rule YAML out).
 
 ## Validate
 
-Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff using the official demisto/content store ruleset, so lint findings surface before store submission:
+Validation checks your pack against demisto-sdk rules. Packs containing Python are also linted with ruff and have their unit tests run, both using the official demisto/content store setup, so lint and test failures surface before store submission rather than in the pipeline. Note this means validate executes your pack's test code:
 
 ```bash
 python spellbook.py validate MyNewPack -c my-content/spellbook.yaml

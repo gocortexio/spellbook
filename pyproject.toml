@@ -15,6 +15,12 @@ dependencies = [
     # Pinned to the ruff version the demisto/content store pipeline uses
     # (see spellbook/assets/ruff_parity.toml); update both together.
     "ruff==0.8.0",
+    # Runtime requirements: validate runs each pack's own unit tests. pytest
+    # also arrives transitively via demisto-sdk, but declaring it here keeps
+    # the dependency explicit. pytest-mock supplies the mocker fixture that
+    # content unit tests use.
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
 ]
 
 [tool.hatch.version]

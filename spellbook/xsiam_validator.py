@@ -34,6 +34,28 @@ XSIAM_DEPTH_ONE_PREFIX_DIRS = {
 # sit in package subdirectories. `demisto-sdk validate` does not enforce
 # these models in practice (a rule missing a required field, or carrying a
 # field the model forbids, passes), so they are applied here.
+# Fields the Cortex Platform stores, returns, and acts on for correlation
+# rules, but which demisto-sdk's strict model does not declare. Verified
+# against a live tenant (/public_api/v1/correlations/get returns them on
+# built-in rules) and against demisto-sdk 1.39.1, whose `validate` accepts a
+# rule carrying all of them. Warning about these would be noise, and acting
+# on the warning would discard real behaviour: is_enabled controls whether a
+# rule installs active, alert_domain selects the domain, timezone drives the
+# cron schedule.
+PLATFORM_CORRELATION_FIELDS = {
+    "action",
+    "alert_domain",
+    "alert_type",
+    "is_enabled",
+    "timezone",
+    "lookup_mapping",
+    "simple_schedule",
+}
+
+# The strict model declares suppression_fields as a string, but the platform
+# stores an array and demisto-sdk accepts one. A list is not a finding.
+LIST_TOLERANT_FIELDS = {"suppression_fields"}
+
 STRICT_MODEL_SOURCES = {
     "CorrelationRules": (
         "demisto_sdk.commands.content_graph.strict_objects.correlation_rule",
@@ -241,6 +263,21 @@ class XSIAMValidator:
                 continue
         return models
 
+    def _is_known_model_gap(self, field: str, error: dict, data: dict) -> bool:
+        """Return True if an error reflects a gap in the SDK model, not the content.
+
+        The strict models lag the platform in two known ways: they omit
+        fields the platform actively uses, and they type suppression_fields
+        as a string where the platform stores an array. Reporting either
+        would bury real findings under noise, and acting on it would break
+        working content.
+        """
+        if error.get("type") == "value_error.extra":
+            return field in PLATFORM_CORRELATION_FIELDS
+        if field in LIST_TOLERANT_FIELDS:
+            return isinstance(data.get(field), list)
+        return False
+
     def _check_strict_schemas(self, pack_path: Path) -> list[ValidationIssue]:
         """Check YAML content items against the demisto-sdk strict models.
 
@@ -299,6 +336,8 @@ class XSIAMValidator:
                     relative_path = str(file_path.relative_to(pack_path.parent))
                     for error in errors():
                         field = ".".join(str(part) for part in error.get("loc", ()))
+                        if self._is_known_model_gap(field, error, data):
+                            continue
                         issues.append(ValidationIssue(
                             rule_name="strict_schema_mismatch",
                             severity="warning",

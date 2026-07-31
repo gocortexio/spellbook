@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 import yaml
 
+from .pack_tests import run_pack_tests
 from .python_lint import run_ruff_check
 from .version_manager import VersionManager
 
@@ -242,6 +243,11 @@ class PackBuilder:
         # build clean locally and then fail official store submission.
         ruff_passed = run_ruff_check(pack_path)
 
+        # Run the pack's own unit tests the way the pipeline does. Same
+        # reasoning as the lint above: validate does not run them, so a pack
+        # could pass here and fail the pipeline's test stage.
+        tests_passed = run_pack_tests(pack_path)
+
         content_root = pack_path.parent.parent.resolve()
         
         git_dir = content_root / ".git"
@@ -305,6 +311,9 @@ class PackBuilder:
                 if not ruff_passed:
                     click.echo(f"Validation failed for {pack_name} (Python lint)")
                     return False
+                if not tests_passed:
+                    click.echo(f"Validation failed for {pack_name} (unit tests)")
+                    return False
                 click.echo(f"Validation passed for {pack_name}")
                 self._check_gitkeep_files(pack_name)
                 return True
@@ -313,7 +322,7 @@ class PackBuilder:
                 return False
         except FileNotFoundError:
             click.echo("demisto-sdk not found, skipping validation")
-            return ruff_passed
+            return ruff_passed and tests_passed
         finally:
             if git_initialised:
                 try:

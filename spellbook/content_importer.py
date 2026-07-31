@@ -20,24 +20,26 @@ import yaml
 class CorrelationImporter:
     """Import correlation rules from JSON exports to YAML files.
 
-    Platform exports carry fields that the demisto-sdk correlation rule
-    schema rejects (the strict model forbids unknown fields, so validate
-    fails on them). Those fields are stripped here. Official content in
-    the demisto/content repository ships without them, so removal does
-    not affect platform installation.
+    Only fields that are meaningless outside the exporting tenant are
+    removed. Everything else is preserved verbatim, including fields that
+    demisto-sdk's strict model does not declare (action, alert_domain,
+    alert_type, is_enabled, timezone). The Cortex Platform stores and uses
+    those fields, and `demisto-sdk validate` does not reject them, so
+    stripping them would silently discard real behaviour: a rule could
+    install disabled, or land in the wrong alert domain.
     """
 
     FIELDS_TO_REMOVE = {
+        # Tenant-local identifier, reassigned on install.
         "rule_id",
+        # Superseded by crontab/execution_mode/search_window; leaving it in
+        # has been observed to fail upload (see the XSIAM validator rule).
         "simple_schedule",
         "lookup_mapping",
-        "action",
-        "alert_domain",
-        "alert_type",
-        "is_enabled",
     }
 
     FIELDS_TO_PRESERVE_NULL = {
+        "alert_type",
         "user_defined_severity",
         "user_defined_category",
     }
@@ -211,13 +213,10 @@ class CorrelationImporter:
         if cleaned.get("alert_category") != "User Defined":
             cleaned.pop("user_defined_category", None)
 
-        # The schema types suppression_fields as a string; official content
-        # encodes multiple fields as a pipe-delimited list.
-        suppression_fields = cleaned.get("suppression_fields")
-        if isinstance(suppression_fields, list):
-            cleaned["suppression_fields"] = "|".join(
-                str(field) for field in suppression_fields
-            )
+        # suppression_fields is left in whatever form the export used. The
+        # platform stores it as an array and demisto-sdk accepts that, even
+        # though the SDK's strict model declares it as a string; rewriting it
+        # would change content to satisfy a model the SDK does not enforce.
 
         for field_name, generator in self.FIELDS_TO_ADD.items():
             if field_name not in cleaned:

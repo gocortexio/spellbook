@@ -1,43 +1,67 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: GoCortexIO
 #
-# Ruff configuration mirroring the official demisto/content store pipeline.
+# Ruff configuration mirroring the official demisto/content contribution gate.
 #
-# The rule content below is a verbatim copy of nightly_ruff.toml from the
-# demisto/content repository (master, fetched 2026-07-23), which is the
-# configuration demisto-sdk pre-commit applies in ci and nightly modes via
-# --config=nightly_ruff.toml. The store pipeline pins ruff v0.8.0 through
-# .pre-commit-config_template.yaml; spellbook pins the same version in
-# pyproject.toml. To refresh, re-fetch the file and update both pins
-# together.
+# The body below is the [tool.ruff] section of demisto/content's pyproject.toml,
+# converted to standalone ruff-config form: the [tool.ruff] table becomes
+# top-level keys and [tool.ruff.lint] becomes [lint]. That file is what the
+# contribution pipeline's pre-commit ruff and ruff-format hooks read, so it is
+# the config a submitted pack is actually judged against. An earlier version of
+# this file used nightly_ruff.toml, which applies only to nightly and ci runs
+# and enforces a different rule set.
 #
-# One addition: target-version. The store pipeline derives it per
-# integration from the docker image Python version (typically py311 for
-# current content); spellbook cannot, so py311 is fixed here. Packs on
-# older Python images may see pyupgrade findings the store would not raise.
+# Source: https://github.com/demisto/content/blob/master/pyproject.toml
+# Commit: a350b85b01d468b41efebdb4e22b45ce7ec4d0f7
+# Copied: 2026-07-24
+#
+# One deliberate change: upstream sets fix = true, which rewrites files in
+# place. Validation reports rather than edits, so it is set to false here.
+#
+# ruff itself is pinned in pyproject.toml to the version the pipeline's
+# .pre-commit-config_template.yaml declares; refresh both together.
+
+fix = false
+extend-exclude = [
+    "CommonServerPython",
+    "test_data",
+    "conftest.py",
+    "demistomock.py",
+]
+line-length = 130
 target-version = "py311"
+src = [
+    "Packs/Base/Scripts/CommonServerPython",
+    "Tests/demistomock",
+    "Packs/ApiModules/Scripts/*",
+]
 
-# This file contains the ruff hook rules when pre-commit is run with the --all flag
-
-lint.select = [
+[lint]
+select = [
     "B002", # unary-prefix-increment
     "B003", # assignment-to-os-environ
     "B004", # unreliable-callable-check
+    "B005", # strip-with-multi-characters
     "B007", # unused-loop-control-variable
     "B009", # get-attr-with-constant
     "B010", # set-attr-with-constant
     "B011", # assert-false
     "B013", # redundant-tuple-in-exception-handler
     "B014", # duplicate-handler-exception
+    "B015", # useless-comparison
     "B016", # cannot-raise-literal
+    "B018", # useless-expression
+    "B020", # loop-variable-overrides-iterator
     "B021", # f-string-docstring
     "B022", # useless-contextlib-suppress
+    "B023", # function-uses-loop-variable
     "B025", # duplicate-try-block-exception
     "B027", # empty-method-without-abstract-decorator
     "B028", # no-explicit-stacklevel
     "B029", # except-with-empty-tuple
     "B030", # except-with-non-exception-classes
     "B031", # reuse-of-groupby-generator
+    "B032", # unintentional-type-annotation
 
     "C400", # unnecessary-generator-list
     "C401", # unnecessary-generator-set
@@ -124,7 +148,9 @@ lint.select = [
     "G202", # logging-redundant-exc-info
 
     "N804", # invalid-first-argument-name-for-class-method
+    "N805", # invalid-first-argument-name-for-method
     "N807", # dunder-function-name
+    "N999", # invalid-module-name
 
     "NPY001", # numpy-deprecated-type-alias
 
@@ -136,12 +162,18 @@ lint.select = [
     "PD012", # pandas-use-of-dot-read-table
     "PD013", # pandas-use-of-dot-stack
     "PD015", # pandas-use-of-pd-merge
+
+    "S307", # eval
+
     "PIE790", # unnecessary-pass
     "PIE794", # duplicate-class-field-definition
+    "PIE796", # non-unique-enums
     "PIE807", # reimplemented-list-builtin
     "PIE810", # multiple-starts-ends-with
-    "PLC3002", # unnecessary-direct-lambda-call
+
     "PLC0414", # useless-import-alias
+    "PLC3002", # unnecessary-direct-lambda-call
+
     "PLE0100", # yield-in-init
     "PLE0101", # return-in-init
     "PLE0116", # continue-in-finally
@@ -162,20 +194,29 @@ lint.select = [
     "PLE2513", # invalid-character-esc
     "PLE2514", # invalid-character-nul
     "PLE2515", # invalid-character-zero-width-space
+
+    "PLR0133", # comparison-of-constant
     "PLR0206", # property-with-parameters
     "PLR0402", # manual-from-import
     "PLR1711", # useless-return
     "PLR1722", # sys-exit-alias
+
+    "PLW0120", # useless-else-on-loop
+    "PLW0129", # assert-on-string-literal
     "PLW0711", # binary-op-exception
     "PLW1508", # invalid-envvar-default
+
     "PT009", # pytest-unittest-assertion
     "PT010", # pytest-raises-without-exception
     "PT013", # pytest-incorrect-pytest-import
+    "PT015", # pytest-assert-always-false
     "PT018", # pytest-composite-assertion
     "PT022", # pytest-useless-yield-fixture
     "PT024", # pytest-unnecessary-asyncio-mark-on-fixture
     "PT025", # pytest-erroneous-use-fixtures-on-fixture
     "PT026", # pytest-use-fixtures-without-parameters
+
+    "PTH102", # os-mkdir
     "PTH105", # pathlib-replace
     "PTH106", # os-rmdir
     "PTH114", # os-path-islink
@@ -186,17 +227,19 @@ lint.select = [
     "PTH124", # py-path
 
     "RET501", # unnecessary-return-none
-    "RET503", # implicit-return
     "RET502", # implicit-return-value
+    "RET503", # implicit-return
+    "RET508", # superfluous-else-break
 
     "RSE102", # unnecessary-paren-on-raise-exception
-    
+
     "RUF001", # ambiguous-unicode-character-string
     "RUF006", # asyncio-dangling-task
     "RUF007", # pairwise-over-zipped
     "RUF008", # mutable-dataclass-default
     "RUF009", # function-call-in-dataclass-default-argument
 
+    "S102", # exec-builtin
     "S103", # bad-file-permissions
     "S302", # suspicious-marshal-usage
     "S306", # suspicious-mktemp-usage
@@ -219,19 +262,20 @@ lint.select = [
     "S612", # logging-config-insecure-listen
     "S701", # jinja2-autoescape-false
 
-    "SIM201", # negate-equal-op
     "SIM101", # duplicate-isinstance-call
     "SIM102", # collapsible-if
     "SIM103", # needless-bool
+    "SIM107", # return-in-try-except-finally
     "SIM109", # compare-with-tuple
+    "SIM110", # reimplemented-builtin
+    "SIM117", # multiple-with-statements
+    "SIM118", # in-dict-keys
+    "SIM201", # negate-equal-op
     "SIM202", # negate-not-equal-op
     "SIM208", # double-negation
     "SIM210", # if-expr-with-true-false
     "SIM211", # if-expr-with-false-true
     "SIM212", # if-expr-with-twisted-arms
-    "SIM110", # reimplemented-builtin
-    "SIM117", # multiple-with-statements
-    "SIM118", # in-dict-keys
     "SIM220", # expr-and-not-expr
     "SIM221", # expr-or-not-expr
     "SIM222", # expr-or-true
@@ -241,6 +285,8 @@ lint.select = [
 
     "T201", # print
     "T203", # p-print
+
+    "TID252", # relative-imports
 
     "UP001", # useless-metaclass-type
     "UP003", # type-of-primitive
@@ -276,7 +322,6 @@ lint.select = [
     "UP035", # deprecated-import
     "UP036", # outdated-version-block
     "UP037", # quoted-annotation
-    "UP038", # non-pep604-isinstance
 
     "W291", # trailing-whitespace
 
@@ -289,18 +334,22 @@ lint.select = [
     "YTT204", # sys-version-info-minor-cmp-int
     "YTT301", # sys-version0
     "YTT302", # sys-version-cmp-str10
-    "YTT303", # sys-version-slice1
+    "YTT303", # sys-version-slice
+]
+ignore = [
+    "E402", # module-import-not-at-top-of-file
 
-    "TID252", # relative-imports
+    "F403", # undefined-local-with-import-star
+    "F405", # undefined-local-with-import-star-usage
+
+    "W605", # invalid-escape-sequence
 ]
 
-line-length = 130
+unfixable = [
+    "RUF001"  # ambiguous-unicode-character-string
+]
 
 [lint.per-file-ignores]
-".vulture_whitelist.py" = [
-    "F821", # undefined-name
-]
-"**/test_data/*" = ["E501"] # line-too-long
-"**/TestData/*" = ["E501"] # line-too-long
-"**/TestInput/*" = ["E501"] # line-too-long
-"**/TestsInput/*" = ["E501"] # line-too-long
+"**/*_test.py" = []
+# Ignore any Python update in ApiModules, until we can proprtly determine their desired version.
+"**/*ApiModule.py"  = [ "UP" ]

@@ -66,17 +66,49 @@ def run_ruff_check(pack_path: Path) -> bool:
         click.echo("[WARN] ruff not found, skipping Python lint")
         return True
 
-    # Run from the pack directory with relative paths. ruff anchors the
-    # config's relative per-file-ignores globs (e.g. **/test_data/*) in a
-    # way that never matches absolute paths outside the config's own tree;
-    # relative paths restore the store pipeline's matching behaviour.
+    relative = [str(path.relative_to(pack_path)) for path in python_files]
+
+    # The pipeline runs two ruff hooks: the linter and the formatter. The
+    # formatter matters as much as the linter, because the contribution gate
+    # fails whenever a hook modifies a file, so a purely cosmetic difference
+    # is a hard CI failure.
+    passed = _run_ruff(
+        pack_path,
+        ["check", "--no-fix", *relative],
+        "ruff found issues in Python content",
+    )
+
+    formatted = _run_ruff(
+        pack_path,
+        ["format", "--check", *relative],
+        "Python content is not formatted as the pipeline expects "
+        "(run: ruff format)",
+    )
+
+    return passed and formatted
+
+
+def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
+    """Run one ruff subcommand against the pack, returning True if it passed.
+
+    Runs from the pack directory with relative paths: ruff anchors the
+    config's relative per-file-ignores globs in a way that never matches
+    absolute paths from outside the config's own tree, so absolute paths
+    would silently lose the pipeline's exemptions.
+    """
+    # --force-exclude makes ruff honour the config's extend-exclude for
+    # paths passed explicitly on the command line; without it the pipeline's
+    # exemptions (test_data, conftest.py, demistomock.py, CommonServerPython)
+    # are silently ignored. The upstream ruff pre-commit hook sets it for the
+    # same reason.
     result = subprocess.run(
         [
             "ruff",
-            "check",
+            args[0],
             "--config",
             str(RUFF_CONFIG),
-            *[str(path.relative_to(pack_path)) for path in python_files],
+            "--force-exclude",
+            *args[1:],
         ],
         capture_output=True,
         text=True,
@@ -90,8 +122,5 @@ def run_ruff_check(pack_path: Path) -> bool:
         click.echo(result.stdout, nl=False)
     if result.stderr:
         click.echo(result.stderr, nl=False)
-    click.echo(
-        f"[ERROR] {pack_path.name}: ruff found issues in Python content "
-        f"(the official demisto/content pipeline enforces these rules)"
-    )
+    click.echo(f"[ERROR] {pack_path.name}: {failure_message}")
     return False
