@@ -419,6 +419,93 @@ docker run --rm ^
 
 ---
 
+## Pack Attribution
+
+Every pack must carry `CONTRIBUTORS.json` at its root. `validate` fails
+without it, and `create` writes one seeded with the pack author so a new pack
+passes from the start.
+
+The format is demisto-sdk's: a flat JSON array of names.
+
+```json
+[
+    "Simon Sigre"
+]
+```
+
+For packs created before this became a requirement, add one line each.
+
+### PowerShell
+
+```powershell
+'["Your Name"]' | Set-Content -Encoding utf8 Packs\MyPack\CONTRIBUTORS.json
+```
+
+### Command Prompt
+
+```cmd
+echo ["Your Name"]> Packs\MyPack\CONTRIBUTORS.json
+```
+
+If `create` reports `[WARN] no author configured`, it wrote no file. Pass
+`--author "Your Name"`, or set `defaults.author` in `spellbook.yaml`.
+
+---
+
+## Format Python
+
+When `validate` reports that Python content is not formatted as the pipeline
+expects, run `format`. Do NOT run plain `ruff format` instead: it uses ruff's
+default line length of 88 where the pipeline uses 130, so it splits lines
+`validate` had already accepted and the pack ends up further from passing.
+
+This is the only command that edits files in your pack, it runs only when you
+type it, and it applies the formatter alone -- lint findings are left for you.
+
+### PowerShell
+
+```powershell
+docker run --rm `
+  -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook format MyNewPack
+```
+
+### Command Prompt
+
+```cmd
+docker run --rm ^
+  -v %cd%:/content ^
+  ghcr.io/gocortexio/spellbook format MyNewPack
+```
+
+---
+
+## Import a Parsing Rule
+
+Copy the rule text from the tenant editor, including its `[INGEST: ...]`
+header. Use the importer rather than creating the `.yml` and `.xif` by hand:
+demisto-sdk finds the `.xif` from the `.yml` stem, so a directory holding only
+a `.xif` registers no content item at all -- the pack validates, uploads and
+installs, and the rule never runs.
+
+### PowerShell
+
+```powershell
+Get-Content rule.xif | docker run --rm -i `
+  -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook summon parsing MyNewPack
+```
+
+### Command Prompt
+
+```cmd
+type rule.xif | docker run --rm -i ^
+  -v %cd%:/content ^
+  ghcr.io/gocortexio/spellbook summon parsing MyNewPack
+```
+
+---
+
 ## Command Reference
 
 The standard Docker invocation pattern for Windows:

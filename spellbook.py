@@ -24,9 +24,11 @@ from spellbook.pack_builder import PackBuilder, EXCLUDED_PACKS
 from spellbook.pack_template import PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
-from spellbook.xsiam_validator import XSIAMValidator
+from spellbook.xsiam_validator import XSIAMValidator, check_modeling_schemas
 from spellbook.content_importer import CorrelationImporter
 from spellbook.modeling_importer import ModelingRuleImporter
+from spellbook.parsing_importer import ParsingRuleImporter
+from spellbook.python_lint import run_ruff_format
 from spellbook.template_renderer import (
     TemplateRenderer,
     list_templates,
@@ -36,7 +38,7 @@ from spellbook.template_renderer import (
 TASK_UUID_PATTERN = re.compile(r"^TASK_UUID_\d+$")
 
 
-PINNED_SDK_VERSION = "1.39.1"
+PINNED_SDK_VERSION = "1.39.5"
 
 # demisto-sdk declares this upload flag with an underscore, not a hyphen
 # (see demisto_sdk/commands/upload/upload_setup.py). Passing the hyphenated
@@ -218,6 +220,94 @@ def check_git_repository(command_name: str = "bump-version") -> bool:
         sys.exit(1)
 
 
+def resolve_pack_argument(pack_argument: str, packs_dir: Path) -> Path:
+    """Resolve an upload argument that may be a pack name or a pack path.
+
+    Every other command takes a pack name, so upload accepts one too. The
+    literal path is resolved first, leaving an explicit Packs/MyPack behaving
+    exactly as it always has; only a bare name with no separator falls back to
+    the configured packs directory.
+
+    Args:
+        pack_argument: The PACK argument as typed.
+        packs_dir: The configured packs directory.
+
+    Returns:
+        The resolved path. May not exist; the caller reports that.
+    """
+    literal = Path(pack_argument).resolve()
+    if literal.exists():
+        return literal
+
+    if Path(pack_argument).parent == Path("."):
+        by_name = (packs_dir / pack_argument).resolve()
+        if by_name.is_dir():
+            return by_name
+
+    return literal
+
+
+def check_git_identity(command_name: str = "bump-version", pack_name: str = "MyPack") -> bool:
+    """
+    Check that git user.name and user.email are set, exiting if they are not.
+
+    This runs as a precondition, before any version files are written. The
+    check used to sit inside create_pack_tag, which runs last, so a missing
+    identity aborted the command with the version already bumped, the release
+    notes written and the README updated. Re-running then bumped a second
+    time from the version the failed run had left behind, producing a release
+    note and a history entry for a version that was never tagged.
+
+    Args:
+        command_name: Name of command for error messages.
+        pack_name: Pack name to show in the remediation example.
+
+    Returns:
+        True if the identity is configured, exits with error otherwise.
+    """
+    try:
+        git_user_name = subprocess.run(
+            ["git", "config", "--get", "user.name"],
+            capture_output=True, text=True
+        )
+        git_user_email = subprocess.run(
+            ["git", "config", "--get", "user.email"],
+            capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        click.echo("[ERROR] Git not found")
+        click.echo("")
+        click.echo("  The --tag flag requires Git to be installed.")
+        click.echo("")
+        sys.exit(1)
+
+    if git_user_name.stdout.strip() and git_user_email.stdout.strip():
+        return True
+
+    click.echo("")
+    click.echo("[ERROR] Git identity not configured")
+    click.echo("")
+    click.echo("  The --tag flag requires git user.name and user.email to be set.")
+    click.echo("")
+    click.echo("  Configuration           Status")
+    click.echo("  ---------------------   ------")
+    name_status = "[OK] set" if git_user_name.stdout.strip() else "[MISSING]"
+    email_status = "[OK] set" if git_user_email.stdout.strip() else "[MISSING]"
+    click.echo(f"  user.name               {name_status}")
+    click.echo(f"  user.email              {email_status}")
+    click.echo("")
+    click.echo("  No files were changed.")
+    click.echo("")
+    click.echo("When using Docker, mount your git config:")
+    click.echo("")
+    click.echo("  docker run --rm \\")
+    click.echo("    -v $(pwd):/content \\")
+    click.echo("    -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\")
+    click.echo(f"    ghcr.io/gocortexio/spellbook {command_name} {pack_name} --tag")
+    click.echo("")
+    sys.exit(1)
+
+
 def create_release_notes(pack_name: str, version: str, pack_path: Path, message: str | None = None, tag: bool = False) -> Path:
     """
     Create a release notes file for a pack version.
@@ -286,8 +376,10 @@ def update_version_history(pack_name: str, pack_path: Path, version: str, commit
     all previous entries. Only called when --tag is used, so a commit message is
     always available (user-supplied via -m or the default "PackName vX.Y.Z").
 
-    Skips with [INFO] if the README.md does not exist or does not contain the
-    version history markers. Skips with [WARN] if markers are in the wrong order.
+    Every skip is reported at [WARN]. A release that silently stops recording
+    its own history is a degraded outcome, not routine progress, and the tier
+    matters: [INFO] reads as noise and is the first thing a caller filters out.
+    Two packs lost four and five releases of history each to exactly that.
 
     Args:
         pack_name: Name of the pack (for console output).
@@ -297,7 +389,7 @@ def update_version_history(pack_name: str, pack_path: Path, version: str, commit
     """
     readme_path = pack_path / "README.md"
     if not readme_path.exists():
-        click.echo(f"[INFO] {pack_name}: README.md not found, skipping version history update")
+        click.echo(f"[WARN] {pack_name}: README.md not found, version history not updated")
         return
 
     readme_content = readme_path.read_text(encoding="utf-8")
@@ -306,7 +398,10 @@ def update_version_history(pack_name: str, pack_path: Path, version: str, commit
     end_marker = "<!-- spellbook:version-history:end -->"
 
     if start_marker not in readme_content or end_marker not in readme_content:
-        click.echo(f"[INFO] {pack_name}: version history markers not found in README.md, skipping update")
+        click.echo(
+            f"[WARN] {pack_name}: no spellbook:version-history marker in "
+            f"README.md, version history not updated"
+        )
         return
 
     start_idx = readme_content.index(start_marker) + len(start_marker)
@@ -346,41 +441,10 @@ def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name:
     Returns:
         True if successful, False otherwise.
     """
-    try:
-        git_user_name = subprocess.run(
-            ["git", "config", "--get", "user.name"],
-            capture_output=True, text=True
-        )
-        git_user_email = subprocess.run(
-            ["git", "config", "--get", "user.email"],
-            capture_output=True, text=True
-        )
-    except FileNotFoundError:
-        click.echo("[WARN] Git not found, skipping tag creation")
-        return False
-    
-    if not git_user_name.stdout.strip() or not git_user_email.stdout.strip():
-        click.echo("")
-        click.echo("[ERROR] Git identity not configured")
-        click.echo("")
-        click.echo("  The --tag flag requires git user.name and user.email to be set.")
-        click.echo("")
-        click.echo("  Configuration           Status")
-        click.echo("  ---------------------   ------")
-        name_status = "[OK] set" if git_user_name.stdout.strip() else "[MISSING]"
-        email_status = "[OK] set" if git_user_email.stdout.strip() else "[MISSING]"
-        click.echo(f"  user.name               {name_status}")
-        click.echo(f"  user.email              {email_status}")
-        click.echo("")
-        click.echo("When using Docker, mount your git config:")
-        click.echo("")
-        click.echo("  docker run --rm \\")
-        click.echo("    -v $(pwd):/content \\")
-        click.echo("    -v ~/.gitconfig:/home/spellbook/.gitconfig:ro \\")
-        click.echo(f"    ghcr.io/gocortexio/spellbook {command_name} {pack_name} --tag")
-        click.echo("")
-        sys.exit(1)
-    
+    # Callers preflight this before writing anything; repeated here so the
+    # helper stays safe to call on its own.
+    check_git_identity(command_name, pack_name)
+
     tag_name = f"{pack_name}-v{version}"
     try:
         subprocess.run(
@@ -415,29 +479,38 @@ def create_pack_tag(pack_name: str, version: str, pack_path: Path, command_name:
 
 
 BANNER = r"""
-                             /\
-                            /  \
-                           |    |
-                         --:'''':--
-                           :'_' :
-                           _:"":\___
-                     ____.' :::     '._
-                *=====<<=)           \    :
-                 '      '-'-'\_      /'._.'
-                             \====:_ ""
-                            .'     \\
-                           :       :
-                          /   :    \
-                         :   .      '.
-      _____              :  : :      :            _
-     / ____|             :__:-:__.;--'           | |
-    | (___  _ __   ___   '-'   '-'    ___   ___ | | __
-     \___ \| '_ \ / _ \  ,. _        / _ \ / _ \| |/ /
-     ____) | |_) |  __/'-'    ).    | (_) | (_) |   <
-    |_____/| .__/ \___| (     '  )   \___/ \___/|_|\_\
-           | |      ( -  .00.  - _
-           |_|     (   .'  _ )    )
-                   '- ()_.\,\,  -
+                                  ....
+                                .'' .'''
+.                             .'   :
+\\                          .:    :
+ \\                        _:    :       ..----.._
+  \\                    .:::.....:::.. .'         ''.
+   \\                 .'  #-. .-######'     #        '.
+    \\                 '.##'/ ' ################       :
+     \\                  #####################         :
+      \\               ..##.-.#### .''''###'.._        :
+       \\             :--:########:            '.    .' :
+        \\..__...--.. :--:#######.'   '.         '.     :
+        :     :  : : '':'-:'':'::        .         '.  .'
+        '---'''..: :    ':    '..'''.      '.        :'
+           \\  :: : :     '      ''''''.     '.      .:
+            \\ ::  : :     '            '.      '      :
+             \\::   : :           ....' ..:       '     '.
+              \\::  : :    .....####\\ .~~.:.             :
+               \\':.:.:.:'#########.===. ~ |.'-.   . '''.. :
+                \\    .'  ########## \ \ _.' '. '-.       '''.
+                :\\  :     ########   \ \      '.  '-.        :
+               :  \\'    '   #### :    \ \      :.    '-.      :
+              :  .'\\   :'  :     :     \ \       :      '-.    :
+             : .'  .\\  '  :      :     :\ \       :        '.   :
+             ::   :  \\'  :.      :     : \ \      :          '. :
+             ::. :    \\  : :      :    ;  \ \     :           '.:
+              : ':    '\\ :  :     :     :  \:\     :        ..'
+                 :    ' \\ :        :     ;  \|      :   .'''
+                 '.   '  \\:                         :.''
+                  .:..... \\:       :            ..''
+                 '._____|'.\\......'''''''.:..'''
+                            \\
 """
 
 
@@ -705,6 +778,36 @@ def validate_all(config):
         click.echo(f"\n[PASS] All {len(packs)} packs validated")
 
 
+@cli.command("format")
+@click.argument("pack_name")
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def format_pack(pack_name, config):
+    """Format a pack's Python for the content pipeline.
+
+    Rewrites the pack's Python files the way `validate` expects to find them,
+    using the same configuration it checks against.
+
+    Run this when validate reports that Python content is not formatted. Do
+    not run plain `ruff format` instead: it uses its own default line length
+    of 88 where the pipeline uses 130, so it reformats files validate had
+    already accepted and makes them fail.
+
+    This is the only command that edits pack files. It applies the formatter
+    only; lint findings are left alone, since fixing those is a judgement
+    call.
+    """
+    check_environment(config)
+    builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
+
+    pack_path = builder.get_pack_path(pack_name)
+    if not run_ruff_format(pack_path):
+        sys.exit(1)
 
 
 @cli.command()
@@ -839,7 +942,8 @@ def set_version(pack_name, new_version, tag, message, config):
     
     if tag:
         check_git_repository("set-version")
-    
+        check_git_identity("set-version", pack_name)
+
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
     builder.update_pack_version(pack_name, clean_version)
@@ -903,6 +1007,11 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
     for the new version.
 
     Use --tag to also create a Git tag for the new version.
+
+    With --tag, the pack README's version history is updated too, but only
+    if it carries the spellbook:version-history marker block that `create`
+    scaffolds. A pack whose README lacks it is bumped and tagged without a
+    history entry, and says so at [WARN].
     """
     if message and not tag:
         click.echo("[ERROR] --message requires --tag")
@@ -916,7 +1025,8 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
     
     if tag:
         check_git_repository("bump-version")
-    
+        check_git_identity("bump-version", pack_name)
+
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
 
@@ -991,7 +1101,7 @@ def rename_content(pack_name, config):
 
 
 @cli.command()
-@click.argument("pack_path")
+@click.argument("pack_path", metavar="PACK")
 @click.option(
     "--platform",
     "-p",
@@ -1034,7 +1144,8 @@ def rename_content(pack_name, config):
 def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketplace, config):
     """Upload a content pack to Cortex Platform.
 
-    PACK_PATH must be a pack directory (e.g., Packs/MyPack).
+    PACK is a pack name (e.g., MyPack), as every other command takes, or a
+    path to the pack directory (e.g., Packs/MyPack). Both work.
 
     Required environment variables:
       DEMISTO_BASE_URL - Your instance URL
@@ -1105,9 +1216,19 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketp
         click.echo("")
         sys.exit(1)
 
-    input_file = Path(pack_path).resolve()
+    builder = PackBuilder(config)
+
+    input_file = resolve_pack_argument(pack_path, builder.packs_dir)
+
     if not input_file.exists():
-        click.echo(f"[ERROR] Path not found: {pack_path}")
+        click.echo(f"[ERROR] Pack not found: {pack_path}")
+        click.echo("")
+        click.echo(f"  Looked for a pack named '{pack_path}' in {builder.packs_dir}")
+        click.echo(f"  and for a directory at '{pack_path}'")
+        click.echo("")
+        click.echo("Usage: upload MyPack --platform")
+        click.echo("       upload Packs/MyPack --platform")
+        click.echo("")
         sys.exit(1)
 
     if not input_file.is_dir():
@@ -1120,7 +1241,6 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketp
         sys.exit(1)
 
     pack_name = input_file.name
-    builder = PackBuilder(config)
     try:
         input_file.relative_to(builder.packs_dir.resolve())
     except ValueError:
@@ -1141,6 +1261,21 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketp
         click.echo(f"folders, files, and internal id/name fields start with '{pack_name}',")
         click.echo(f"then rebuild with: python spellbook.py build {pack_name}")
         click.echo("")
+
+    # A modelling rule schema that is present but unreadable used to reach
+    # demisto-sdk and abort mid-upload as an unhandled traceback naming no
+    # file. Refuse here instead, with the same finding validate would give.
+    schema_issues = check_modeling_schemas(input_file)
+    if schema_issues:
+        click.echo("")
+        for issue in schema_issues:
+            click.echo(f"[ERROR] {issue.file_path}: {issue.message}")
+        click.echo("")
+        click.echo(f"[ERROR] {pack_name}: modelling rule schema is not usable, "
+                   f"refusing to upload")
+        click.echo(f"        Fix the schema, then: python spellbook.py validate {pack_name}")
+        click.echo("")
+        sys.exit(1)
 
     content_root = input_file.parent.parent.resolve()
     git_dir = content_root / ".git"
@@ -1604,6 +1739,93 @@ def summon_datamodel(pack_name, name, minimal_schema, config):
 
     click.echo("")
     click.echo(f"[OK] Summoned data model rule to {pack_name}")
+
+
+@summon.command("parsing")
+@click.argument("pack_name")
+@click.option(
+    "--name",
+    "name",
+    default=None,
+    help="Base name for the rule (default: derived from the target dataset). "
+         "The 'ParsingRule' suffix is appended automatically."
+)
+@click.option(
+    "--config",
+    "-c",
+    default="spellbook.yaml",
+    help="Path to configuration file."
+)
+def summon_parsing(pack_name, name, config):
+    """Import a parsing rule from XIF text.
+
+    Reads raw XIF rule text from stdin (piped input or interactive paste
+    followed by Ctrl+D) and creates a parsing rule package in the pack's
+    ParsingRules directory.
+
+    The input must start with an [INGEST: ...] header, as copied from the
+    tenant rule editor. Two files are written and kept stem-aligned so
+    demisto-sdk binds them together: the rule YAML and the XIF. Both are
+    required - a lone XIF is invisible to demisto-sdk, so the pack uploads
+    and installs while the rule never deploys.
+
+    The package is named after the target dataset by default (for example
+    acme_widget_raw becomes AcmeWidget), so a pack can hold a parsing rule
+    per source without collision. Use --name to override the base name.
+
+    Example:
+      cat rule.xif | spellbook summon parsing MyPack
+      spellbook summon parsing MyPack < rule.xif
+    """
+    check_environment(config)
+    builder = PackBuilder(config)
+    builder.validate_pack_exists(pack_name)
+
+    click.echo(f"Spellbook v{__version__}")
+    click.echo("")
+    click.echo(f"Summoning parsing rule into {pack_name}...")
+    click.echo("Reading from stdin (paste XIF, then Ctrl+D to finish)")
+    click.echo("")
+
+    try:
+        xif_content = sys.stdin.read()
+    except KeyboardInterrupt:
+        click.echo("")
+        click.echo("[INFO] Cancelled")
+        sys.exit(0)
+
+    if not xif_content.strip():
+        click.echo("[ERROR] No input received")
+        click.echo("")
+        click.echo("  Pipe XIF content or paste and press Ctrl+D:")
+        click.echo("    cat rule.xif | spellbook summon parsing MyPack")
+        click.echo("")
+        sys.exit(1)
+
+    importer = ParsingRuleImporter(builder.packs_dir)
+
+    try:
+        result = importer.import_from_xif(xif_content, pack_name, name=name)
+    except ValueError as e:
+        click.echo(f"[ERROR] {e}")
+        sys.exit(1)
+
+    click.echo(f"[INFO] Target dataset(s): {', '.join(result['datasets'])}")
+    click.echo(f"[INFO] Package: ParsingRules/{result['stem']}")
+    click.echo("")
+
+    for file_result in result["files"]:
+        location = f"ParsingRules/{result['stem']}/{file_result['filename']}"
+        if file_result["overwritten"]:
+            click.echo(f"[WARN] Overwrote: {location}")
+        else:
+            click.echo(f"[OK] Created: {location}")
+
+    for warning in result["warnings"]:
+        click.echo(f"[WARN] {warning}")
+
+    click.echo("")
+    click.echo(f"[OK] Summoned parsing rule to {pack_name}")
 
 
 @summon.command("template")

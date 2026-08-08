@@ -56,7 +56,7 @@ XQL_EXTENSION = ".xql"
 
 # Content types that demisto-sdk only recognises when the output filename
 # carries a specific prefix. Source of truth: demisto-sdk's filename regex
-# map in demisto_sdk/commands/common/constants.py — e.g. JOB_JSON_REGEX is
+# map in demisto_sdk/commands/common/constants.py - e.g. JOB_JSON_REGEX is
 # r"{JOBS_DIR_REGEX}\/job-([^/]+)\.json", so a Job whose file is not named
 # job-<something>.json is silently skipped by the uploader. Other content
 # types we currently ship (Playbooks, Triggers, ModelingRules, etc.) use
@@ -475,7 +475,7 @@ class TemplateRenderer:
         """Raise ValueError if a token-expanded path segment is unsafe.
 
         Rejects empty segments, dotdot traversals, and segments that contain
-        path separators or are absolute paths — all of which could cause
+        path separators or are absolute paths - all of which could cause
         writes to escape the intended pack directory.
         """
         if not segment:

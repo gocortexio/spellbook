@@ -22,10 +22,10 @@ ships unmapped.
 
 import json
 import re
-from pathlib import Path
 
 import yaml
 
+from .rule_importer import RuleImporterBase
 from .xdm_fields import scan_unmappable_fields
 
 
@@ -59,6 +59,16 @@ IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
 # of a comparison operator (==, !=, <=, >=) or the '=' of a keyword argument.
 ASSIGNMENT_PATTERN = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*)\s*=(?![=~])")
 
+# The same, interleaved with brackets so a scan can tell an assignment from a
+# comparison by depth: XQL uses '=' for both, and only a top-level one assigns.
+ASSIGNMENT_OR_BRACKET_PATTERN = re.compile(
+    r"([()\[\]{}])|([A-Za-z_][A-Za-z0-9_.]*)\s*=(?![=~])"
+)
+
+# A column whose name collides with an XQL operator is written in backticks,
+# which is the only way the rule can read it (`in`, `out`, `filter`).
+BACKTICK_IDENTIFIER_PATTERN = re.compile(r"`([A-Za-z_][A-Za-z0-9_.]*)`")
+
 # XQL statement keywords and operators that appear as bare words. Function
 # names are excluded structurally instead (any identifier followed by an
 # opening bracket), which avoids maintaining an exhaustive list of XQL
@@ -85,16 +95,25 @@ XQL_KEYWORDS = {
 CONSTANT_ROOT_PATTERN = re.compile(r"[a-z]")
 
 
-class ModelingRuleImporter:
+def extract_datasets(xif: str) -> list[str]:
+    """Return the datasets declared in an XIF, ordered and deduplicated.
+
+    Module-level so the validator can compare a schema's keys against the
+    rule's datasets without building an importer. Keeping one implementation
+    matters more than the convenience: this is the expression MR107 uses, so
+    the importer that WRITES a schema and the check that READS one have to
+    agree, or spellbook would reject its own output.
+    """
+    seen = []
+    for match in SDK_DATASET_PATTERN.findall(xif):
+        dataset = match.strip('"')
+        if dataset and dataset not in seen:
+            seen.append(dataset)
+    return seen
+
+
+class ModelingRuleImporter(RuleImporterBase):
     """Import data model rules from raw XIF text into a pack."""
-
-    def __init__(self, packs_dir: Path):
-        """Initialise the importer.
-
-        Args:
-            packs_dir: Path to the Packs directory.
-        """
-        self.packs_dir = packs_dir
 
     def import_from_xif(
         self,
@@ -151,7 +170,7 @@ class ModelingRuleImporter:
             )
 
         resolved_stem, display_name = self._derive_names(pack_name, datasets, name)
-        self._validate_stem(resolved_stem)
+        self._validate_stem(resolved_stem, MODELING_RULE_ID_SUFFIX, "MR108")
 
         package_dir = rules_dir / resolved_stem
         self._assert_within(package_dir, pack_path)
@@ -174,7 +193,7 @@ class ModelingRuleImporter:
             self._write(
                 package_dir,
                 f"{resolved_stem}.yml",
-                self._build_yaml(resolved_stem, display_name, datasets),
+                self._build_yaml(resolved_stem, display_name, pack_name),
                 pack_path,
             )
         )
@@ -197,9 +216,16 @@ class ModelingRuleImporter:
             for dataset, cols in columns.items():
                 inferred_only = [c for c in cols if c != RAW_LOG_COLUMN]
                 if inferred_only:
+                    # Naming the count and the completeness question, not just
+                    # the types: a reader told to "review types" checks the
+                    # types and does not think to check whether the SET is
+                    # right, and a column the rule reads but the schema omits
+                    # fails the install with an opaque error naming no field.
                     warnings.append(
-                        f"{dataset}: inferred column(s) {', '.join(inferred_only)} "
-                        f"as type '{DEFAULT_COLUMN_TYPE}' - review types before upload"
+                        f"{dataset}: inferred {len(inferred_only)} column(s) as "
+                        f"type '{DEFAULT_COLUMN_TYPE}' - check both the types "
+                        f"AND that no column the rule reads is missing: "
+                        f"{', '.join(inferred_only)}"
                     )
         if len(datasets) > 1:
             warnings.append(
@@ -238,12 +264,7 @@ class ModelingRuleImporter:
         Uses the same expression as demisto-sdk so the result matches what
         validator MR107 will compute against the schema keys.
         """
-        seen = []
-        for match in SDK_DATASET_PATTERN.findall(xif):
-            dataset = match.strip('"')
-            if dataset and dataset not in seen:
-                seen.append(dataset)
-        return seen
+        return extract_datasets(xif)
 
     def infer_columns(self, xif: str) -> list[str]:
         """Infer the raw dataset columns the rule reads from.
@@ -258,9 +279,12 @@ class ModelingRuleImporter:
         """
         body = self._strip_noise(xif)
 
-        assigned = {
-            name for name in ASSIGNMENT_PATTERN.findall(body)
-        }
+        assigned = self._assigned_names(body)
+
+        # A backtick-quoted identifier is explicitly a column, which is how a
+        # rule reads one whose name collides with an operator (`in`). Without
+        # this it is filtered out as a keyword and the schema omits it.
+        escaped = set(BACKTICK_IDENTIFIER_PATTERN.findall(body))
 
         referenced = []
         for match in IDENTIFIER_PATTERN.finditer(body):
@@ -268,7 +292,7 @@ class ModelingRuleImporter:
             following = body[match.end():match.end() + 1]
             if following == "(":
                 continue
-            if name.lower() in XQL_KEYWORDS:
+            if name.lower() in XQL_KEYWORDS and name not in escaped:
                 continue
             if name.startswith("xdm."):
                 continue
@@ -296,6 +320,32 @@ class ModelingRuleImporter:
         columns.insert(0, RAW_LOG_COLUMN)
         return columns
 
+    def _assigned_names(self, body: str) -> set[str]:
+        """Return the names the rule assigns, as opposed to the ones it reads.
+
+        XQL spells assignment and equality the same way, so `=` alone does not
+        identify an assignment. Inside a call it is a comparison, and the
+        identifier beside it is being READ:
+
+            tmp_outcome = if(fg_status = "success", 1, act = "deny", 2)
+
+        assigns tmp_outcome and reads fg_status and act. Treating all three as
+        assigned dropped them from the schema, and a MODEL rule is validated
+        statically against that schema, so a column the rule reads but the
+        schema omits fails the install. Only a `name =` at bracket depth zero
+        is an assignment. This shape is what per-record classification looks
+        like, so it is the common case rather than an edge one.
+        """
+        assigned = set()
+        depth = 0
+        for match in ASSIGNMENT_OR_BRACKET_PATTERN.finditer(body):
+            bracket, name = match.group(1), match.group(2)
+            if bracket:
+                depth = max(0, depth + (1 if bracket in "([{" else -1))
+            elif depth == 0:
+                assigned.add(name)
+        return assigned
+
     def _strip_noise(self, xif: str) -> str:
         """Remove comments, string literals, and MODEL headers from the body.
 
@@ -322,11 +372,20 @@ class ModelingRuleImporter:
         ``("CloudflareAccountAuditModelingRule",
         "Cloudflare Account Audit Modeling Rule")``. The stem satisfies MR108's
         id suffix and the display name satisfies its name suffix.
+
+        An explicit ``name`` keeps the casing it was given. Tokenising lowers
+        every token, so an acronym is unrecoverable: ``HuaweiNE`` came back as
+        ``Huawei Ne`` and ``CiscoIOSXR`` as ``Cisco Iosxr``, which then had to
+        be hand-edited. A dataset is lowercase to begin with, so it is still
+        title-cased.
         """
         if name:
-            tokens = self._tokenise(self._strip_rule_suffix(name))
-        else:
-            tokens = self._tokenise(self._strip_raw(datasets[0]))
+            explicit = self._strip_rule_suffix(name).strip()
+            if explicit:
+                stem = re.sub(r"[^A-Za-z0-9]", "", explicit) + MODELING_RULE_ID_SUFFIX
+                return stem, f"{explicit} {MODELING_RULE_NAME_SUFFIX}"
+
+        tokens = self._tokenise(self._strip_raw(datasets[0]))
 
         if not tokens:
             tokens = self._tokenise(pack_name)
@@ -337,25 +396,6 @@ class ModelingRuleImporter:
         stem = "".join(capitalised) + MODELING_RULE_ID_SUFFIX
         display_name = " ".join(capitalised) + f" {MODELING_RULE_NAME_SUFFIX}"
         return stem, display_name
-
-    def _tokenise(self, value: str) -> list[str]:
-        """Split a name into lowercase word tokens.
-
-        Breaks on non-alphanumeric separators and on camelCase boundaries, so
-        both ``cloudflare_account_audit`` and ``CloudflareAccountAudit`` yield
-        ``["cloudflare", "account", "audit"]``.
-        """
-        tokens = []
-        for chunk in re.split(r"[^A-Za-z0-9]+", value):
-            if not chunk:
-                continue
-            for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[0-9]+", chunk):
-                tokens.append(part.lower())
-        return tokens
-
-    def _strip_raw(self, dataset: str) -> str:
-        """Drop a trailing ``_raw`` suffix from a dataset name."""
-        return dataset[:-4] if dataset.endswith("_raw") else dataset
 
     def _strip_rule_suffix(self, name: str) -> str:
         """Drop a trailing ModelingRule / Modeling Rule suffix if the user
@@ -368,61 +408,24 @@ class ModelingRuleImporter:
             )
         return name
 
-    def _validate_stem(self, stem: str) -> None:
-        """Reject a stem that is unsafe as a path segment or fails MR108."""
-        if not stem:
-            raise ValueError("Package stem is empty")
-        if stem in (".", ".."):
-            raise ValueError(f"Package stem is a path traversal segment: {stem!r}")
-        if "/" in stem or "\\" in stem:
-            raise ValueError(f"Package stem contains a path separator: {stem!r}")
-        if Path(stem).is_absolute():
-            raise ValueError(f"Package stem is an absolute path: {stem!r}")
-        if not stem.endswith(MODELING_RULE_ID_SUFFIX):
-            raise ValueError(
-                f"Package stem '{stem}' must end with '{MODELING_RULE_ID_SUFFIX}' "
-                f"(demisto-sdk validator MR108)"
-            )
-
-    def _assert_within(self, candidate: Path, root: Path) -> None:
-        """Raise if a resolved path escapes the pack directory."""
-        try:
-            candidate.resolve().relative_to(root.resolve())
-        except ValueError:
-            raise ValueError(
-                f"Path '{candidate}' resolves outside the pack directory "
-                f"'{root}'; refusing to write"
-            )
-
-    def _write(self, package_dir: Path, filename: str, content: str, pack_path: Path) -> dict:
-        """Write one package file, guarding against symlink and path escape."""
-        file_path = package_dir / filename
-        self._assert_within(file_path, pack_path)
-        if file_path.is_symlink():
-            raise ValueError(
-                f"Pack file '{filename}' is a symlink; refusing to write "
-                "through it to prevent path escape"
-            )
-        overwritten = file_path.exists()
-        file_path.write_text(content, encoding="utf-8")
-        return {
-            "filename": filename,
-            "path": str(file_path),
-            "overwritten": overwritten,
-        }
-
-    def _build_yaml(self, stem: str, display_name: str, datasets: list[str]) -> str:
+    def _build_yaml(self, stem: str, display_name: str, pack_name: str) -> str:
         """Build the rule YAML.
 
         The rules and schema keys must be empty strings (validator MR101); the
         sidecars are located by filename stem, not by these values. tags is a
         string for modelling rules, unlike parsing rules where it is a list.
+
+        tags carries the pack name, matching what the SamplePack template
+        emits and what most tagged rules in demisto/content do. Nothing reads
+        it: the SDK does not model the field on the ModelingRule object and no
+        validator references it, and half of official content leaves it empty.
+        It was previously the dataset name, a value no official rule uses.
         """
         data = {
             "id": stem,
             "name": display_name,
             "fromversion": DEFAULT_FROM_VERSION,
-            "tags": datasets[0],
+            "tags": pack_name,
             "rules": "",
             "schema": "",
         }
@@ -448,10 +451,3 @@ class ModelingRuleImporter:
             for dataset, cols in columns.items()
         }
         return json.dumps(schema, indent=4) + "\n"
-
-    def _normalise_line_endings(self, value: str) -> str:
-        """Normalise CRLF and CR to LF.
-
-        Console paste frequently carries Windows line endings.
-        """
-        return value.replace("\r\n", "\n").replace("\r", "\n")

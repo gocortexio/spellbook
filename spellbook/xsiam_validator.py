@@ -8,6 +8,7 @@ not detected by demisto-sdk. These rules are based on actual upload
 failures encountered when pushing content to XSIAM.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -15,6 +16,10 @@ from dataclasses import dataclass
 
 import yaml
 
+from .modeling_importer import (
+    SCHEMA_FILE_VALID_ATTRIBUTES_TYPE,
+    extract_datasets,
+)
 from .xdm_fields import scan_unmappable_fields
 
 
@@ -37,7 +42,8 @@ XSIAM_DEPTH_ONE_PREFIX_DIRS = {
 # Fields the Cortex Platform stores, returns, and acts on for correlation
 # rules, but which demisto-sdk's strict model does not declare. Verified
 # against a live tenant (/public_api/v1/correlations/get returns them on
-# built-in rules) and against demisto-sdk 1.39.1, whose `validate` accepts a
+# built-in rules) and against demisto-sdk 1.39.1 (re-checked at the 1.39.5
+# bump, August 2026), whose `validate` accepts a
 # rule carrying all of them. Warning about these would be noise, and acting
 # on the warning would discard real behaviour: is_enabled controls whether a
 # rule installs active, alert_domain selects the domain, timezone drives the
@@ -55,6 +61,18 @@ PLATFORM_CORRELATION_FIELDS = {
 # The strict model declares suppression_fields as a string, but the platform
 # stores an array and demisto-sdk accepts one. A list is not a finding.
 LIST_TOLERANT_FIELDS = {"suppression_fields"}
+
+# demisto-sdk's name for the pack attribution file. The SDK reads it as a
+# flat List[str] of contributor names; any other shape is unreadable to it.
+CONTRIBUTORS_FILENAME = "CONTRIBUTORS.json"
+
+# The value the scaffold used to write into a trigger's playbook_id. A trigger
+# carrying it binds to nothing, and nothing else in the chain says so.
+TRIGGER_PLAYBOOK_PLACEHOLDER = "PLAYBOOK_ID_HERE"
+
+# demisto-sdk locates a modelling rule's schema by the YAML stem, so the
+# schema file is always the stem plus this suffix.
+SCHEMA_FILENAME_SUFFIX = "_schema.json"
 
 STRICT_MODEL_SOURCES = {
     "CorrelationRules": (
@@ -94,6 +112,156 @@ class ValidationRule:
     pattern: str  # Regex pattern to detect issues
     message: str
     severity: str = "error"
+
+
+def check_modeling_schemas(pack_path: Path) -> list[ValidationIssue]:
+    """Check every modelling rule's `_schema.json` is readable and coherent.
+
+    Presence alone was checked before this. A schema that is present but
+    unusable passed with exit 0 and then failed at upload as an unhandled
+    traceback: malformed JSON raised JSONDecodeError, and a top-level array
+    raised "'list' object has no attribute 'keys'". Neither named the pack,
+    the file, or the line.
+
+    The four things checked here are the ones a MODEL rule is validated
+    against statically on the tenant, so getting any of them wrong means the
+    rule maps nothing:
+
+    - the file parses as JSON at all
+    - its root is an object, keyed by dataset
+    - those keys are datasets the rule's own .xif declares (MR107's rule,
+      compared with MR107's own expression via extract_datasets)
+    - each column carries a `type` from MR106's closed set and a boolean
+      `is_array`
+
+    Module-level rather than a method so `upload` can run the same check as a
+    pre-flight and refuse with a sentence instead of a traceback.
+
+    Args:
+        pack_path: Path to the pack directory.
+
+    Returns:
+        List of validation issues found.
+    """
+    rules_dir = pack_path / "ModelingRules"
+    if not rules_dir.is_dir():
+        return []
+
+    issues: list[ValidationIssue] = []
+
+    def fail(path: Path, message: str) -> ValidationIssue:
+        return ValidationIssue(
+            rule_name="modeling_schema_invalid",
+            severity="error",
+            file_path=str(path.relative_to(pack_path.parent)),
+            message=message,
+        )
+
+    for schema_path in sorted(rules_dir.rglob(f"*{SCHEMA_FILENAME_SUFFIX}")):
+        # A directory of that name is reported by the file-set check as a
+        # missing schema; reading it here would raise instead.
+        if not schema_path.is_file():
+            continue
+
+        try:
+            data = json.loads(schema_path.read_text(encoding="utf-8"))
+        except OSError as error:
+            issues.append(fail(
+                schema_path,
+                f"could not be read: {error}",
+            ))
+            continue
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            issues.append(fail(
+                schema_path,
+                f"is not valid JSON: {error}. Upload would fail on this with "
+                f"an unhandled traceback naming no file",
+            ))
+            continue
+
+        if not isinstance(data, dict):
+            issues.append(fail(
+                schema_path,
+                f"root must be an object keyed by dataset, not "
+                f"{type(data).__name__}",
+            ))
+            continue
+
+        if not data:
+            issues.append(fail(
+                schema_path,
+                "declares no dataset - the rule would map nothing",
+            ))
+            continue
+
+        # MR107: the schema's keys are compared against the datasets the
+        # sibling .xif declares. Skip silently when there is no .xif; the
+        # file-set check already reports that as its own finding.
+        stem = schema_path.name[: -len(SCHEMA_FILENAME_SUFFIX)]
+        xif_path = schema_path.with_name(f"{stem}.xif")
+        if xif_path.is_file():
+            try:
+                xif_text = xif_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                issues.append(fail(
+                    xif_path,
+                    f"could not be read: {error}",
+                ))
+            else:
+                declared = set(extract_datasets(xif_text))
+                if not declared:
+                    issues.append(fail(
+                        schema_path,
+                        f"has a schema but {xif_path.name} declares no "
+                        f"dataset the parser can find - the rule would map "
+                        f"nothing",
+                    ))
+                else:
+                    undeclared = sorted(set(data) - declared)
+                    if undeclared:
+                        issues.append(fail(
+                            schema_path,
+                            f"declares dataset(s) {', '.join(undeclared)} "
+                            f"that {xif_path.name} does not use (it declares "
+                            f"{', '.join(sorted(declared))})",
+                        ))
+
+        for dataset, columns in data.items():
+            if not isinstance(columns, dict):
+                issues.append(fail(
+                    schema_path,
+                    f"dataset '{dataset}' must map to an object of columns, "
+                    f"not {type(columns).__name__}",
+                ))
+                continue
+
+            for column, attributes in columns.items():
+                where = f"{dataset}.{column}"
+                if not isinstance(attributes, dict):
+                    issues.append(fail(
+                        schema_path,
+                        f"column '{where}' must be an object with 'type' and "
+                        f"'is_array', not {type(attributes).__name__}",
+                    ))
+                    continue
+
+                column_type = attributes.get("type")
+                if column_type not in SCHEMA_FILE_VALID_ATTRIBUTES_TYPE:
+                    valid = ", ".join(sorted(SCHEMA_FILE_VALID_ATTRIBUTES_TYPE))
+                    issues.append(fail(
+                        schema_path,
+                        f"column '{where}' has type {column_type!r}; "
+                        f"demisto-sdk accepts only {valid}",
+                    ))
+
+                if not isinstance(attributes.get("is_array"), bool):
+                    issues.append(fail(
+                        schema_path,
+                        f"column '{where}' needs a boolean 'is_array', "
+                        f"found {attributes.get('is_array')!r}",
+                    ))
+
+    return issues
 
 
 class XSIAMValidator:
@@ -188,6 +356,226 @@ class XSIAMValidator:
         issues.extend(self._check_depth_one_filenames(pack_path))
 
         issues.extend(self._check_strict_schemas(pack_path))
+
+        issues.extend(self._check_rule_file_sets(pack_path))
+
+        issues.extend(self._check_contributors(pack_path))
+
+        issues.extend(self._check_trigger_placeholders(pack_path))
+
+        issues.extend(check_modeling_schemas(pack_path))
+
+        return issues
+
+    def _check_trigger_placeholders(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check that no trigger still carries the scaffold's placeholder.
+
+        A trigger is the only content-level thing binding an issue to a
+        playbook; a correlation rule carries no field naming one. Leave the
+        placeholder in and everything still installs, validates and runs when
+        started by hand. The playbook is simply never started by anything, and
+        the only way to notice is to wait for an issue that should have run it
+        and see that it did not.
+
+        Nothing else catches this. demisto-sdk ships TR100 and TR101 but its
+        default_config.toml selects no TR codes, so neither runs, and no SDK
+        validator cross-references playbook_id against the pack's playbooks.
+
+        Only the literal placeholder is checked. An empty playbook_id is
+        legitimate on a quick-action trigger, which binds to an automation
+        instead, and deciding whether a real id names the right playbook is
+        not something this can know.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        triggers_dir = pack_path / "Triggers"
+        if not triggers_dir.is_dir():
+            return []
+
+        issues = []
+        for path in sorted(triggers_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Shape is demisto-sdk's business; only the placeholder here.
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            if data.get("playbook_id") == TRIGGER_PLAYBOOK_PLACEHOLDER:
+                issues.append(ValidationIssue(
+                    rule_name="trigger_placeholder_playbook_id",
+                    severity="error",
+                    file_path=str(path.relative_to(pack_path.parent)),
+                    message=(
+                        f"playbook_id is still the placeholder "
+                        f"'{TRIGGER_PLAYBOOK_PLACEHOLDER}' - set it to the id "
+                        f"of the playbook this trigger should start, or delete "
+                        f"the trigger. As written it starts nothing and "
+                        f"nothing else reports that"
+                    ),
+                ))
+
+        return issues
+
+    def _check_contributors(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check that the pack carries a readable CONTRIBUTORS.json.
+
+        The format is demisto-sdk's, not one of our own: a flat JSON array of
+        contributor names. The SDK reads it as List[str]
+        (content_graph/parsers/pack.py) and renders the names into the pack
+        README, so any other shape - an object, nested records - is a file the
+        marketplace cannot read.
+
+        Requiring it is a house rule. Upstream treats the file as optional and
+        many official packs ship none; a pack without attribution is not one
+        we ship, so it is an error here. It is reported alongside every other
+        finding rather than aborting the run, because stopping early would
+        hide the rest of the pack's problems.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        path = pack_path / CONTRIBUTORS_FILENAME
+        relative = f"{pack_path.name}/{CONTRIBUTORS_FILENAME}"
+
+        if not path.is_file():
+            return [ValidationIssue(
+                rule_name="missing_contributors",
+                severity="error",
+                file_path=relative,
+                message=(
+                    "no CONTRIBUTORS.json at the pack root - every pack must "
+                    'record its attribution as a JSON array of names, e.g. '
+                    '["Simon Sigre"]'
+                ),
+            )]
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            return [ValidationIssue(
+                rule_name="invalid_contributors",
+                severity="error",
+                file_path=relative,
+                message=f"is not valid JSON: {error}",
+            )]
+
+        if not isinstance(data, list):
+            return [ValidationIssue(
+                rule_name="invalid_contributors",
+                severity="error",
+                file_path=relative,
+                message=(
+                    f"must be a JSON array of names, not "
+                    f"{type(data).__name__} - demisto-sdk reads this file as "
+                    f"a list of strings and the marketplace cannot read any "
+                    f"other shape"
+                ),
+            )]
+
+        if not data:
+            return [ValidationIssue(
+                rule_name="invalid_contributors",
+                severity="error",
+                file_path=relative,
+                message="is an empty array - name at least one contributor",
+            )]
+
+        offenders = [entry for entry in data if not isinstance(entry, str) or not entry.strip()]
+        if offenders:
+            return [ValidationIssue(
+                rule_name="invalid_contributors",
+                severity="error",
+                file_path=relative,
+                message=(
+                    f"every entry must be a non-empty name string; found "
+                    f"{offenders[0]!r}"
+                ),
+            )]
+
+        return []
+
+    def _check_rule_file_sets(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check that every .xif has the sidecar files that register it.
+
+        A parsing or modelling rule is a file set, not a single file, and the
+        YAML descriptor is the content item: demisto-sdk enumerates the .yml
+        and derives the rest from its stem, mapping .xif to .yml by suffix
+        replacement. A .xif with no matching .yml is therefore invisible to
+        every tool in the chain. Validation passes, upload reports success,
+        the pack installs and the tenant reports the new version, but the
+        rule was never deployed and no output anywhere says so.
+
+        This is why the check is an error rather than a warning. The failure
+        has no other signal: the rule simply never runs.
+
+        Modelling rules take a third file, `<stem>_schema.json`, which
+        declares the raw dataset columns the rule maps from.
+
+        Presence is tested with is_file(), not exists(): a directory of the
+        right name satisfies exists() and would pass the check.
+
+        This covers presence only. Schema *validity* is unchecked here, and
+        demisto-sdk does not cover it either in the configuration spellbook
+        invokes: its default_config.toml selects fifteen path-based codes,
+        none of them MR or ST, so MR100/101/106/107/108 and ST110 never run.
+        A schema that is malformed JSON, an empty object, or keyed on a
+        dataset the .xif does not declare passes validation today.
+
+        Args:
+            pack_path: Path to the pack directory.
+
+        Returns:
+            List of validation issues found.
+        """
+        issues = []
+
+        for content_type in ("ParsingRules", "ModelingRules"):
+            content_dir = pack_path / content_type
+            if not content_dir.exists():
+                continue
+
+            for xif_path in sorted(content_dir.rglob("*.xif")):
+                relative_path = str(xif_path.relative_to(pack_path.parent))
+                descriptor = xif_path.with_suffix(".yml")
+
+                if not descriptor.is_file():
+                    issues.append(ValidationIssue(
+                        rule_name="rule_missing_descriptor",
+                        severity="error",
+                        file_path=relative_path,
+                        message=(
+                            f"no matching {descriptor.name} - without the YAML "
+                            f"descriptor demisto-sdk never sees this rule, so it "
+                            f"uploads and installs without ever deploying"
+                        ),
+                    ))
+                    continue
+
+                if content_type != "ModelingRules":
+                    continue
+
+                schema = xif_path.with_name(f"{xif_path.stem}_schema.json")
+                if not schema.is_file():
+                    issues.append(ValidationIssue(
+                        rule_name="rule_missing_schema",
+                        severity="error",
+                        file_path=relative_path,
+                        message=(
+                            f"no matching {schema.name} - the schema declares "
+                            f"the dataset columns the rule maps from, and the "
+                            f"package is incomplete without it"
+                        ),
+                    ))
 
         return issues
 

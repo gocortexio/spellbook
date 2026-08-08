@@ -24,6 +24,11 @@ import click
 
 RUFF_CONFIG = Path(__file__).parent / "assets" / "ruff_parity.toml"
 
+# ruff exit codes: 0 clean, 1 violations found, 2 aborted before checking.
+# 1 is a statement about the pack; 2 is a statement about the environment, and
+# reporting them the same way makes a real finding unrecoverable.
+RUFF_ABORTED = 2
+
 # Generated demisto-sdk support files. They are gitignored in content
 # instances and never reach the store pipeline, so linting them would only
 # produce findings the pipeline cannot see.
@@ -81,11 +86,72 @@ def run_ruff_check(pack_path: Path) -> bool:
     formatted = _run_ruff(
         pack_path,
         ["format", "--check", *relative],
-        "Python content is not formatted as the pipeline expects "
-        "(run: ruff format)",
+        f"Python content is not formatted as the pipeline expects "
+        f"(run: spellbook format {pack_path.name})",
     )
 
     return passed and formatted
+
+
+def run_ruff_format(pack_path: Path) -> bool:
+    """Rewrite the pack's Python with the formatting the pipeline expects.
+
+    The counterpart to the formatter check above. Without this the check
+    reports a problem the author has no working way to fix: plain
+    `ruff format` uses its own default line length of 88 where this
+    configuration uses 130, so following that advice reformats files the
+    check had already accepted and makes them fail.
+
+    This is the only place spellbook edits a user's files, and it runs only
+    when asked for by name. It applies the formatter alone; lint findings are
+    left for the author, since fixing those is a judgement call.
+
+    Args:
+        pack_path: Path to the pack directory.
+
+    Returns:
+        True if the formatter ran, False if it could not.
+    """
+    python_files = find_python_files(pack_path)
+    if not python_files:
+        click.echo(f"[OK] {pack_path.name}: no Python content to format")
+        return True
+
+    if shutil.which("ruff") is None:
+        click.echo("[ERROR] ruff not found, cannot format")
+        return False
+
+    relative = [str(path.relative_to(pack_path)) for path in python_files]
+
+    result = subprocess.run(
+        [
+            "ruff",
+            "format",
+            "--config",
+            str(RUFF_CONFIG),
+            "--force-exclude",
+            "--no-cache",
+            *relative,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(pack_path),
+    )
+
+    if result.stdout:
+        click.echo(result.stdout, nl=False)
+    if result.stderr:
+        click.echo(result.stderr, nl=False)
+
+    if result.returncode != 0:
+        click.echo(
+            f"[ERROR] {pack_path.name}: ruff could NOT RUN (format) - it "
+            f"exited before formatting anything"
+        )
+        return False
+
+    click.echo(f"[OK] {pack_path.name}: formatted for the content pipeline")
+    return True
 
 
 def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
@@ -101,6 +167,13 @@ def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
     # exemptions (test_data, conftest.py, demistomock.py, CommonServerPython)
     # are silently ignored. The upstream ruff pre-commit hook sets it for the
     # same reason.
+    #
+    # --no-cache because ruff otherwise writes .ruff_cache into the directory
+    # it runs in, which is the user's pack. On a read-only mount it cannot,
+    # and it aborts without linting anything; in CI that failed five packs on
+    # every push with a message about formatting. The cache is an
+    # optimisation, and not writing into a user's content is the same rule
+    # the test sandbox follows.
     result = subprocess.run(
         [
             "ruff",
@@ -108,6 +181,7 @@ def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
             "--config",
             str(RUFF_CONFIG),
             "--force-exclude",
+            "--no-cache",
             *args[1:],
         ],
         capture_output=True,
@@ -122,5 +196,14 @@ def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
         click.echo(result.stdout, nl=False)
     if result.stderr:
         click.echo(result.stderr, nl=False)
+
+    if result.returncode == RUFF_ABORTED:
+        click.echo(
+            f"[ERROR] {pack_path.name}: ruff could NOT RUN ({args[0]}) - it "
+            f"exited before checking anything, so this says nothing about the "
+            f"pack's Python"
+        )
+        return False
+
     click.echo(f"[ERROR] {pack_path.name}: {failure_message}")
     return False

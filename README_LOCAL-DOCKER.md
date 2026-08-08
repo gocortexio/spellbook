@@ -147,6 +147,53 @@ docker run --rm \
 
 ---
 
+## Pack Attribution
+
+Every pack must carry `CONTRIBUTORS.json` at its root. `validate` fails
+without it, and `create` writes one seeded with the pack author so a new pack
+passes from the start.
+
+The format is demisto-sdk's: a flat JSON array of names.
+
+```json
+[
+    "Simon Sigre"
+]
+```
+
+If you have packs created before this became a requirement, add one line each:
+
+```bash
+echo '["Your Name"]' > Packs/MyPack/CONTRIBUTORS.json
+```
+
+If `create` reports `[WARN] no author configured`, it wrote no file. Pass
+`--author "Your Name"`, or set `defaults.author` in `spellbook.yaml`.
+
+---
+
+## Format Python
+
+When `validate` reports that Python content is not formatted as the pipeline
+expects, run:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook format MyNewPack
+```
+
+Do NOT run plain `ruff format` instead. It uses ruff's default line length of
+88 where the pipeline uses 130, so it splits lines `validate` had already
+accepted and the pack ends up further from passing. `spellbook format` uses
+the same configuration `validate` checks against.
+
+This is the only command that edits files in your pack. It runs only when you
+type it, and it applies the formatter alone -- lint findings are left for you,
+since fixing those is a judgement call.
+
+---
+
 ## Build
 
 Building creates a distributable zip file in the artefacts directory:
@@ -418,6 +465,26 @@ hold many rules. Options:
 Schema columns are inferred from the fields the rule reads. Review the inferred
 types (all are written as `string`) before uploading.
 
+### Import a Parsing Rule
+
+Copy the rule text from the tenant editor, including its `[INGEST: ...]`
+header, and pipe it in:
+
+```bash
+cat rule.xif | docker run --rm -i \
+  -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon parsing MyNewPack
+```
+
+This writes the two-file parsing rule package (`.yml` and `.xif`) with
+matching stems into `ParsingRules/`, named after the target dataset. Use
+`--name` to override the name.
+
+Use the importer rather than creating the pair by hand. demisto-sdk finds the
+`.xif` from the `.yml` stem, so a directory holding only a `.xif` registers no
+content item at all: the pack validates, uploads and installs, and the rule
+never runs.
+
 ---
 
 ## Command Reference
@@ -443,10 +510,11 @@ Replace `<command>` with any of the following:
 | Create pack without author image | create PackName --no-author-image |
 | Validate pack | validate PackName |
 | Validate all | validate-all |
+| Format pack Python | format PackName |
 | Build pack | build PackName |
 | Build all | build --all |
 | Build without validation | build --all --no-validate |
-| Upload pack | upload Packs/PackName |
+| Upload pack | upload PackName (or upload Packs/PackName) |
 | Upload to Cortex Platform | upload Packs/PackName --platform |
 | Upload to XSIAM (legacy) | upload Packs/PackName --xsiam |
 | Upload without validation | upload Packs/PackName --platform --skip-validation |
@@ -460,5 +528,6 @@ Replace `<command>` with any of the following:
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
 | Import correlations | summon correlation PackName (with stdin) |
 | Import data model rule | summon datamodel PackName (with stdin) |
+| Import parsing rule | summon parsing PackName (with stdin) |
 | Generate from template | summon template intel_retrohunt PackName --set KEY=VALUE |
 | List templates | summon template --list |

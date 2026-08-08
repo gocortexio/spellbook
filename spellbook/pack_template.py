@@ -131,6 +131,8 @@ class PackTemplate:
 
         self._create_secrets_ignore(pack_path)
 
+        self._create_contributors(pack_path, author)
+
         if include_author_image:
             self._create_author_image(pack_path)
 
@@ -271,6 +273,33 @@ For support, please refer to the pack metadata for contact information.
         readme_path = pack_path / "README.md"
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_content)
+
+    def _create_contributors(self, pack_path: Path, author: str | None) -> None:
+        """Write CONTRIBUTORS.json, seeded with the pack author.
+
+        demisto-sdk reads this file as a flat list of contributor names and
+        renders them into the pack README, so the format is an array of
+        strings and nothing else. Validation requires it, so scaffolding it
+        keeps a freshly created pack passing; edit it to add reviewers and
+        maintainers.
+        """
+        name = (author or self.defaults.get("author", "")).strip()
+        if not name:
+            # Writing [] would produce a pack that fails our own validation
+            # the moment it is created. Say so here, and leave the file out
+            # so validate reports the missing-file case, whose message
+            # carries the example to copy.
+            click.echo(
+                "[WARN] no author configured, so no CONTRIBUTORS.json was "
+                "written - pass --author, or set defaults.author in "
+                "spellbook.yaml, or add the file by hand"
+            )
+            return
+
+        path = pack_path / "CONTRIBUTORS.json"
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump([name], handle, indent=4)
+            handle.write("\n")
 
     def _create_pack_ignore(self, pack_path: Path) -> None:
         """Create .pack-ignore file."""
@@ -467,7 +496,11 @@ schema: ''
 tags: {pack_name}
 """
 
-        xif_content = f"""[MODEL: dataset="{dataset}"]
+        # Two conventions in the XQL below, both taken from official
+        # demisto/content modelling rules: the MODEL header leaves the dataset
+        # unquoted, and xdm.source.port is integer-typed so it takes
+        # to_integer() rather than to_number(), which yields a float.
+        xif_content = f"""[MODEL: dataset={dataset}]
 alter
     event_type = arrayindex(regextract(_raw_log, "\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}[Z\\d\\.]*\\s+\\S+\\s+(\\w+)"), 0),
     username = arrayindex(regextract(_raw_log, "user[=:\\s]+(\\S+)"), 0),
@@ -478,7 +511,7 @@ alter
     xdm.event.type = event_type,
     xdm.source.user.username = username,
     xdm.source.ipv4 = source_ip,
-    xdm.source.port = to_number(source_port),
+    xdm.source.port = to_integer(source_port),
     xdm.event.description = message;
 """
 
@@ -654,47 +687,17 @@ alter
             json.dump(report_data, f, indent=2)
             f.write("\n")
 
-    def _create_trigger(self, pack_path: Path, pack_name: str) -> None:
-        """Create sample trigger for Cortex Platform.
-        
-        Creates an example trigger JSON file that links alerts to playbooks.
-        Triggers define which playbook runs when specific alert conditions are met.
-        """
-        triggers_dir = pack_path / "Triggers"
-        triggers_dir.mkdir(exist_ok=True)
-        
-        trigger_id = f"{pack_name.lower()}_example_trigger"
-        trigger_name = f"{pack_name} Alert Handler"
-        
-        trigger_data = {
-            "trigger_name": trigger_name,
-            "trigger_id": trigger_id,
-            "playbook_id": "PLAYBOOK_ID_HERE",
-            "suggestion_reason": f"Recommended for handling {pack_name} alerts",
-            "description": f"Triggers the {pack_name} response playbook when matching alerts are detected.",
-            "alerts_filter": {
-                "filter": {
-                    "AND": [
-                        {
-                            "SEARCH_FIELD": "alert_source",
-                            "SEARCH_TYPE": "EQ",
-                            "SEARCH_VALUE": pack_name
-                        }
-                    ]
-                }
-            }
-        }
-        
-        trigger_path = triggers_dir / f"{pack_name}ExampleTrigger.json"
-        with open(trigger_path, "w", encoding="utf-8") as f:
-            json.dump(trigger_data, f, indent=2)
-            f.write("\n")
-
     def create_xsiam_content(self, pack_path: Path, pack_name: str) -> None:
         """Create Cortex Platform content structure.
         
         Creates complete XSIAM content including ParsingRules, ModelingRules,
-        CorrelationRules, XSIAMDashboards, XSIAMReports, Triggers, and ReleaseNotes.
+        CorrelationRules, XSIAMDashboards, XSIAMReports, and ReleaseNotes.
+
+        No Trigger is written. A trigger binds an issue to a playbook by
+        the playbook's id, and this sample ships no playbook, so any
+        trigger here would bind to nothing. The scaffold used to emit one
+        carrying a PLAYBOOK_ID_HERE placeholder, which validation now
+        rejects. The reference shape is in XSIAM_CONTENT_GUIDELINES.
         All templates follow the official demisto-sdk schemas and are based
         on working examples from the demisto/content repository.
         """
@@ -703,7 +706,6 @@ alter
         self._create_correlation_rule(pack_path, pack_name)
         self._create_xsiam_dashboard(pack_path, pack_name)
         self._create_xsiam_report(pack_path, pack_name)
-        self._create_trigger(pack_path, pack_name)
         self._create_release_notes(pack_path, pack_name)
 
     def list_templates(self) -> list[str]:

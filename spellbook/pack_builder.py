@@ -321,7 +321,7 @@ class PackBuilder:
                 click.echo(f"Validation failed for {pack_name}")
                 return False
         except FileNotFoundError:
-            click.echo("demisto-sdk not found, skipping validation")
+            click.echo("[WARN] demisto-sdk not found, skipping validation")
             return ruff_passed and tests_passed
         finally:
             if git_initialised:

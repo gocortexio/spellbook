@@ -30,7 +30,7 @@ cd gocortex-spellbook
 Using pip:
 
 ```bash
-pip install "demisto-sdk==1.39.1" "gitpython>=3.1.50" "pyyaml>=6.0.3" "ruff==0.8.0"
+pip install "demisto-sdk==1.39.5" "gitpython>=3.1.50" "pyyaml>=6.0.3" "ruff==0.8.0"
 ```
 
 Or using uv:
@@ -159,6 +159,23 @@ The package is named after the dataset by default; use `--name "Base Name"` to
 override it, or `--minimal-schema` to write only `_raw_log` instead of inferring
 columns from the rule body. Review the inferred column types before uploading.
 
+Parsing rules work the same way. Copy the rule text including its
+`[INGEST: ...]` header and pipe it in:
+
+```bash
+cat rule.xif | python spellbook.py summon parsing MyNewPack -c my-content/spellbook.yaml
+```
+
+This writes the two-file parsing rule package (`.yml`, `.xif`) with matching
+filenames into `Packs/MyNewPack/ParsingRules/`, named after the target dataset
+unless `--name` overrides it.
+
+Use the importers rather than creating either package by hand. demisto-sdk
+enumerates the `.yml` and locates the `.xif` by stem, so a directory holding
+only a `.xif` registers no content item at all: the pack validates, uploads and
+installs, the tenant reports the new version, and the rule never runs.
+`validate` fails on an incomplete set, but the importers avoid the situation.
+
 The same stdin contract applies to `summon correlation` (JSON in, correlation
 rule YAML out).
 
@@ -177,6 +194,50 @@ To validate all packs at once:
 ```bash
 python spellbook.py validate-all -c my-content/spellbook.yaml
 ```
+
+---
+
+## Pack Attribution
+
+Every pack must carry `CONTRIBUTORS.json` at its root; `validate` fails
+without it. `create` writes one seeded with the pack author, so a new pack
+passes from the start.
+
+The format is demisto-sdk's: a flat JSON array of names.
+
+```json
+[
+    "Simon Sigre"
+]
+```
+
+For packs created before this became a requirement:
+
+```bash
+echo '["Your Name"]' > my-content/Packs/MyPack/CONTRIBUTORS.json
+```
+
+If `create` reports `[WARN] no author configured`, it wrote no file. Pass
+`--author "Your Name"`, or set `defaults.author` in `spellbook.yaml`.
+
+---
+
+## Format Python
+
+When `validate` reports Python content is not formatted as the pipeline
+expects:
+
+```bash
+python spellbook.py format MyNewPack -c my-content/spellbook.yaml
+```
+
+Do not run plain `ruff format` instead. It uses ruff's default line length of
+88 where the pipeline configuration uses 130, so it splits lines `validate`
+had already accepted and the pack ends up further from passing.
+
+This is the only command that edits files in a pack, it runs only when you
+invoke it, and it applies the formatter alone -- lint findings are left for
+you, since fixing those is a judgement call.
 
 ---
 
@@ -312,6 +373,7 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Create pack without author image | python spellbook.py create PackName --no-author-image -c my-content/spellbook.yaml |
 | Validate pack | python spellbook.py validate PackName -c my-content/spellbook.yaml |
 | Validate all | python spellbook.py validate-all -c my-content/spellbook.yaml |
+| Format pack Python | python spellbook.py format PackName -c my-content/spellbook.yaml |
 | Build pack | python spellbook.py build PackName -c my-content/spellbook.yaml |
 | Build all | python spellbook.py build --all -c my-content/spellbook.yaml |
 | Build without validation | python spellbook.py build --all --no-validate -c my-content/spellbook.yaml |
@@ -322,5 +384,6 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Bump with message | python spellbook.py bump-version PackName --tag -m "Closes #123" -c my-content/spellbook.yaml |
 | Import correlations | cat rules.json \| python spellbook.py summon correlation PackName -c my-content/spellbook.yaml |
 | Import data model rule | cat rule.xif \| python spellbook.py summon datamodel PackName -c my-content/spellbook.yaml |
+| Import parsing rule | cat rule.xif \| python spellbook.py summon parsing PackName -c my-content/spellbook.yaml |
 | Generate from template | python spellbook.py summon template intel_retrohunt PackName --set KEY=VALUE -c my-content/spellbook.yaml |
 | List templates | python spellbook.py summon template --list -c my-content/spellbook.yaml |

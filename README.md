@@ -26,7 +26,8 @@ The demisto-sdk has many features and validation rules. Spellbook wraps it in a 
 
 - Instance initialisation with optional GitHub Actions templates
 - Multi-pack support within a single content instance
-- Import of tenant-authored content via `summon correlation` and `summon datamodel`
+- Import of tenant-authored content via `summon correlation`, `summon datamodel`
+  and `summon parsing`
 - Token-based template generation via `summon template` (e.g. `intel_retrohunt`, `parsing_modeling`)
 - Validation using demisto-sdk, plus ruff linting and unit-test execution for Python content, matching the official demisto/content store setup
 - Automated packaging into distributable zip files
@@ -86,6 +87,7 @@ from discovery; build it directly by name.
 | list-packs | List all discovered packs |
 | validate | Validate a pack using demisto-sdk |
 | validate-all | Validate all packs |
+| format | Format a pack's Python for the content pipeline |
 | build | Build and package packs |
 | upload | Upload a pack to Cortex Platform |
 | version | Show version information for a pack |
@@ -93,6 +95,7 @@ from discovery; build it directly by name.
 | bump-version | Automatically increment pack version |
 | summon correlation | Import correlation rules from platform JSON export |
 | summon datamodel | Import a data model rule from XIF text |
+| summon parsing | Import a parsing rule from XIF text |
 | summon template | Generate content from templates with token substitution |
 | rename-content | Rename content items to match pack name (temporarily disabled) |
 
@@ -111,7 +114,7 @@ docker run --rm -v $(pwd):/content \
   ghcr.io/gocortexio/spellbook create MyPack --no-author-image
 ```
 
-Import content authored in a Cortex Platform tenant. Both importers read from
+Import content authored in a Cortex Platform tenant. Every importer reads from
 stdin, so pipe a file in or paste and press Ctrl+D:
 
 ```bash
@@ -122,12 +125,79 @@ cat rules.json | docker run -i --rm -v $(pwd):/content \
 # a data model (XDM) rule from XIF (must start with [MODEL: dataset="..."])
 cat rule.xif | docker run -i --rm -v $(pwd):/content \
   ghcr.io/gocortexio/spellbook summon datamodel MyPack
+
+# a parsing rule from XIF (must start with [INGEST: ...])
+cat rule.xif | docker run -i --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon parsing MyPack
 ```
 
 `summon datamodel` writes the three-file modelling rule package (`.yml`, `.xif`,
 `_schema.json`) into `ModelingRules/`, named after the dataset. Use `--name` to
 override the name or `--minimal-schema` to emit only `_raw_log` instead of
 inferring columns.
+
+`summon parsing` writes the two-file parsing rule package (`.yml`, `.xif`) into
+`ParsingRules/`, named after the target dataset. Use `--name` to override it.
+
+Both rule types are file sets whose stems must agree, because demisto-sdk
+enumerates the `.yml` and finds the rest by stem. Creating them by hand is the
+one way to get this wrong: a lone `.xif` is invisible, so the pack validates,
+uploads and installs while the rule never deploys. `validate` now fails on an
+incomplete set.
+
+## Pack Attribution
+
+Every pack must carry `CONTRIBUTORS.json` at its root, and `validate` fails
+without it. `create` writes one seeded with the pack author, so a new pack
+passes from the start.
+
+The format is demisto-sdk's: a flat JSON array of names, nothing else.
+
+```json
+[
+    "Simon Sigre"
+]
+```
+
+Upgrading an existing pack is one line per pack:
+
+```bash
+echo '["Your Name"]' > Packs/MyPack/CONTRIBUTORS.json
+```
+
+## Formatting Python
+
+When `validate` reports that Python content is not formatted, run:
+
+```bash
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook format MyPack
+```
+
+Do not run plain `ruff format` instead. It uses ruff's own default line length
+of 88 where the content pipeline uses 130, so it splits lines `validate` had
+already accepted and leaves the pack further from passing. `spellbook format`
+applies the same configuration `validate` checks against. It is the only
+command that edits your pack, it runs only when you type it, and it applies
+the formatter alone -- lint findings are left for you to judge.
+
+## Templates and Triggers
+
+`summon template intel_retrohunt` renders a playbook, and ships no Trigger.
+That is deliberate rather than an oversight, and it means the playbook will
+not start on its own.
+
+A Trigger is the only content-level thing that binds an issue to a playbook,
+and its `alerts_filter` names which alerts should start it. That is a
+detection-design decision the template has no way to know, so it is authored
+by hand once you know which correlation rules the playbook should respond to.
+The reference shape, including the hex `trigger_id` and the rule that
+`playbook_id` must equal the playbook's `id` byte for byte, is in
+`PRIVATE_DOCS/XSIAM_CONTENT_GUIDELINES.md` under Triggers.
+
+`validate` will not let you ship one carrying the old `PLAYBOOK_ID_HERE`
+placeholder, but it cannot tell you that a playbook has no Trigger at all,
+because a sub-playbook started by its parent is correct without one.
 
 ## Instance Structure
 

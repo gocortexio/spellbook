@@ -53,6 +53,40 @@ The -s flag signs your commit, which is required by some organisations.
 
 ---
 
+## Upgrading an Existing Pipeline
+
+If your pipeline pulls `:latest` and your instance predates the v1.23 stream,
+your validate job will start failing. Your build job will not: the
+scaffolded workflows pass `--no-validate` there, so packaging and publishing
+keep working while you catch up.
+
+Four checks were added to `validate` and `validate-all`. In rough order of how
+likely they are to bite:
+
+| Check | Who it hits | Fix |
+|-------|-------------|-----|
+| `CONTRIBUTORS.json` required at each pack root | Every pack created before v1.23 | `echo '["Your Name"]' > Packs/MyPack/CONTRIBUTORS.json` |
+| Python formatted to the pipeline's configuration | Packs with Python | `spellbook format MyPack` |
+| Python passes ruff at store parity | Packs with Python and lint findings | Real work: fix the findings. `format` deliberately does not auto-fix lint |
+| Pack unit tests are executed | Packs with `*_test.py` | Real work if they fail. Note `validate` now RUNS your test code, under a conftest that fails a test writing to stdout or stderr |
+
+A pack with no Python is unaffected by the last three, so a rules-only pack
+usually needs only the `CONTRIBUTORS.json` line.
+
+To stage the upgrade, drop `validate-all` from the pipeline temporarily, or
+pin the image to a specific tag rather than `:latest` until the packs are
+fixed:
+
+```yaml
+image: ghcr.io/gocortexio/spellbook:1.22.0
+```
+
+Pinning is the safer default for a pipeline in general: `:latest` means a
+Spellbook release can change what your pipeline accepts without you changing
+anything.
+
+---
+
 ## GitHub Actions Workflows
 
 Your instance includes two workflow files in .github/workflows/:
