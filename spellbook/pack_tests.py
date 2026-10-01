@@ -34,6 +34,8 @@ from pathlib import Path
 
 import click
 
+from .xsiam_validator import ValidationIssue, render_issue
+
 
 PYTEST_ENV_DIR = Path(__file__).parent / "assets" / "pytest_env"
 
@@ -113,7 +115,7 @@ def _stage_sandbox(package: Path, sandbox: Path) -> None:
             stub.write_text(GENERATED_STUB_BODY, encoding="utf-8")
 
 
-def run_pack_tests(pack_path: Path) -> bool:
+def run_pack_tests(pack_path: Path, issues: list | None = None) -> bool:
     """Run unit tests for every testable package in the pack.
 
     Packs with no unit tests pass immediately, which is the common case for
@@ -122,6 +124,8 @@ def run_pack_tests(pack_path: Path) -> bool:
 
     Args:
         pack_path: Path to the pack directory.
+        issues: When given, each failure is appended to it as a finding, so a
+            caller emitting JSON can carry it rather than leave only prose.
 
     Returns:
         True if every package passed (or there was nothing to run).
@@ -140,7 +144,7 @@ def run_pack_tests(pack_path: Path) -> bool:
 
     passed = True
     for package in packages:
-        if not _run_package_tests(pack_path, package):
+        if not _run_package_tests(pack_path, package, issues):
             passed = False
     return passed
 
@@ -157,7 +161,15 @@ def _harness_failure_reason(output: str) -> str:
     return ""
 
 
-def _run_package_tests(pack_path: Path, package: Path) -> bool:
+def _report(issue: ValidationIssue, issues: list | None) -> None:
+    """Print a finding in the tagged shape, and collect it when asked to."""
+    for line in render_issue(issue, "ERROR"):
+        click.echo(line)
+    if issues is not None:
+        issues.append(issue)
+
+
+def _run_package_tests(pack_path: Path, package: Path, issues: list | None = None) -> bool:
     """Run one package's tests in a sandbox, returning True if they passed."""
     workdir = Path(tempfile.mkdtemp(prefix="spellbook_tests_"))
     sandbox = workdir / package.name
@@ -180,10 +192,24 @@ def _run_package_tests(pack_path: Path, package: Path) -> bool:
                 timeout=TEST_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
-            click.echo(
-                f"[ERROR] {pack_path.name}: unit tests for {package.name} exceeded "
-                f"{TEST_TIMEOUT_SECONDS}s and were stopped"
-            )
+            _report(ValidationIssue(
+                rule_name="unit_tests_timed_out",
+                severity="error",
+                file_path=pack_path.name,
+                message=(
+                    f"unit tests for {package.name} exceeded "
+                    f"{TEST_TIMEOUT_SECONDS}s and were stopped"
+                ),
+                consequence=(
+                    "the suite did not finish, so the pack's tests are "
+                    "unverified; the official pipeline runs them too"
+                ),
+                remediation=(
+                    f"find the test in {package.name} that hangs - typically "
+                    f"one making a real network call or waiting on input - and "
+                    f"mock what it waits for"
+                ),
+            ), issues)
             return False
         except FileNotFoundError:
             click.echo("[WARN] pytest not found, skipping unit tests")
@@ -199,17 +225,46 @@ def _run_package_tests(pack_path: Path, package: Path) -> bool:
 
         if result.returncode in (PYTEST_INTERRUPTED, PYTEST_INTERNAL_ERROR):
             reason = _harness_failure_reason(result.stdout + result.stderr)
-            click.echo(
-                f"[ERROR] {pack_path.name}: unit tests could NOT RUN for "
-                f"{package.name}{reason} - the harness failed before executing "
-                f"any test, so this says nothing about the pack's tests"
-            )
+            _report(ValidationIssue(
+                rule_name="unit_tests_not_run",
+                severity="error",
+                file_path=pack_path.name,
+                message=(
+                    f"unit tests could NOT RUN for {package.name}{reason} - "
+                    f"the harness failed before executing any test, so this "
+                    f"says nothing about the pack's tests"
+                ),
+                consequence=(
+                    "no test ran, so the pack's tests are unverified rather "
+                    "than failed"
+                ),
+                remediation=(
+                    "the pytest output above names the import or collection "
+                    "error; a missing harness dependency is a gap in "
+                    "spellbook's sandbox rather than in the pack, so report it "
+                    "instead of editing the tests around it"
+                ),
+            ), issues)
             return False
 
-        click.echo(
-            f"[ERROR] {pack_path.name}: unit tests failed for {package.name} "
-            f"(the official content pipeline runs these same tests)"
-        )
+        _report(ValidationIssue(
+            rule_name="unit_tests_failed",
+            severity="error",
+            file_path=pack_path.name,
+            message=(
+                f"unit tests failed for {package.name} "
+                f"(the official content pipeline runs these same tests)"
+            ),
+            consequence=(
+                "the official content pipeline runs these same tests and fails "
+                "the submission"
+            ),
+            remediation=(
+                "the pytest output above names each failing test and its "
+                "assertion; fix the code, or the test if it is the test that "
+                "is wrong"
+            ),
+        ), issues)
         return False
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

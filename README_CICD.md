@@ -22,6 +22,14 @@ The official Spellbook Docker image is published to GitHub Container Registry:
 docker pull ghcr.io/gocortexio/spellbook:latest
 ```
 
+`:latest` does not say which build you got. `spellbook --version` reports the
+commit an image was built from, so it can confirm what you are actually
+running: an image published by CI prints `1.25.4 (<commit>)`, while one built
+locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+published before 1.24.0 predate the build stamp and report a bare version with
+no identifier, so match the image ID to tell those apart. The stamp cannot
+distinguish two local builds from each other: every local build is unstamped.
+
 This image is used by the CI/CD workflows and is automatically built with each release.
 
 ---
@@ -73,12 +81,34 @@ likely they are to bite:
 A pack with no Python is unaffected by the last three, so a rules-only pack
 usually needs only the `CONTRIBUTORS.json` line.
 
+Later releases added more. `validate` now also refuses an empty `categories`,
+an integration YAML whose first root key is not `name` or `display`, a
+correlation drill-down with no pipe stages, and several demisto-sdk validators
+the default configuration never selected (`ST111`, `BA133`, `IN169`, `MR108`
+among them). Each finding prints what is wrong, why it matters and the edit that
+fixes it, so the output tells you what to do rather than only what it saw.
+
+`CONTRIBUTORS.json` no longer needs the manual line above. Set the identity
+values once in `spellbook.yaml` and carry them into existing packs:
+
+```bash
+# report what would change, write nothing
+spellbook sync-defaults --all
+
+# make the changes
+spellbook sync-defaults --all --apply
+```
+
+Run it by hand and commit the result. It is NOT a pipeline step: it writes to
+pack metadata, and a CI job that rewrites content on every run is a job that
+will eventually rewrite something you did not intend.
+
 To stage the upgrade, drop `validate-all` from the pipeline temporarily, or
 pin the image to a specific tag rather than `:latest` until the packs are
 fixed:
 
 ```yaml
-image: ghcr.io/gocortexio/spellbook:1.22.0
+image: ghcr.io/gocortexio/spellbook:1.23.0
 ```
 
 Pinning is the safer default for a pipeline in general: `:latest` means a
@@ -94,7 +124,14 @@ Your instance includes two workflow files in .github/workflows/:
 - conjure.yml - Builds packs when tags are pushed
 - validate.yml - Validates packs on pull requests and pushes to main
 
-These workflows are pre-configured to use the official Spellbook image (`ghcr.io/gocortexio/spellbook:latest`). No additional configuration is required.
+These workflows are pre-configured to use the official Spellbook image and
+track `:latest`. They are NOT pinned - the version shown in the example above is
+an illustration of what pinning looks like, not what the scaffold writes.
+
+That matters given the warning in the section above: a `:latest` pipeline starts
+failing when new validators land. Pin the tag in your own `conjure.yml`,
+`validate.yml` and `.gitlab-ci.yml` if you want the pipeline to change only when
+you change it.
 
 ---
 
@@ -213,7 +250,7 @@ To manually trigger a build in GitLab:
 To use GitLab Container Registry instead of GitHub Container Registry, update the image reference in .gitlab-ci.yml:
 
 ```yaml
-ghcr.io/gocortexio/spellbook:latest
+ghcr.io/gocortexio/spellbook:1.23.0
 ```
 
 Replace with your own registry if you host a copy of the Spellbook image.
@@ -344,7 +381,7 @@ The solution is to run the container as the same user as the runner:
       -v ${{ github.workspace }}/Packs:/content/Packs \
       -v ${{ github.workspace }}/artifacts:/content/artifacts \
       -v ${{ github.workspace }}/spellbook.yaml:/content/spellbook.yaml \
-      ghcr.io/gocortexio/spellbook:latest \
+      ghcr.io/gocortexio/spellbook:1.23.0 \
       build --all --no-validate
 ```
 

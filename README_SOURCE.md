@@ -157,7 +157,10 @@ This writes the three-file modelling rule package (`.yml`, `.xif`,
 `_schema.json`) with matching filenames into `Packs/MyNewPack/ModelingRules/`.
 The package is named after the dataset by default; use `--name "Base Name"` to
 override it, or `--minimal-schema` to write only `_raw_log` instead of inferring
-columns from the rule body. Review the inferred column types before uploading.
+columns from the rule body. `_raw_log` is declared only when the rule reads it,
+so a collector-ingested source that leaves it null does not get a column it never
+populates. Review the inferred column types before uploading: most are written as
+`string`, and the `[WARN]` output names the ones most likely to need correcting.
 
 Parsing rules work the same way. Copy the rule text including its
 `[INGEST: ...]` header and pipe it in:
@@ -387,3 +390,8 @@ All commands below assume you are in the gocortex-spellbook directory:
 | Import parsing rule | cat rule.xif \| python spellbook.py summon parsing PackName -c my-content/spellbook.yaml |
 | Generate from template | python spellbook.py summon template intel_retrohunt PackName --set KEY=VALUE -c my-content/spellbook.yaml |
 | List templates | python spellbook.py summon template --list -c my-content/spellbook.yaml |
+| Check environment | python spellbook.py check-init -c my-content/spellbook.yaml |
+| List instances | python spellbook.py list-instances |
+| Preview identity sync | python spellbook.py sync-defaults --all -c my-content/spellbook.yaml |
+| Apply identity sync | python spellbook.py sync-defaults --all --apply -c my-content/spellbook.yaml |
+| Rename content | python spellbook.py rename-content PackName (temporarily disabled - refuses and prints manual steps) |

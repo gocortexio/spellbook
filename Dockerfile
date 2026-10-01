@@ -20,13 +20,22 @@ RUN uv export --frozen --no-dev --no-emit-project \
 # Stage 2: runtime image
 FROM python:3.11-alpine
 
-ARG SPELLBOOK_VERSION=1.23.0
+ARG SPELLBOOK_VERSION=1.25.4
+# The commit the image was built from. CI passes it (docker/metadata-action
+# already computes the SHA for the OCI label); a plain `docker build` leaves it
+# empty, and empty is meaningful - it is how `--version` tells an unstamped
+# local build apart from a published one. The label alone cannot do this job:
+# labels are daemon-side image metadata and a running container cannot read
+# its own, so the value has to be promoted to an ENV to reach the CLI.
+ARG VCS_REF=""
+ENV SPELLBOOK_REVISION="${VCS_REF}"
 LABEL maintainer="GoCortexIO - Simon Sigre"
 LABEL description="Cortex Platform content pack builder with demisto-sdk"
 LABEL version="${SPELLBOOK_VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/gocortexio/spellbook"
 LABEL org.opencontainers.image.description="GoCortex Spellbook - Cortex Platform content pack builder with demisto-sdk"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -53,6 +62,32 @@ RUN addgroup -g 1000 spellbook && \
 
 # Create mount point for user content with correct ownership
 RUN mkdir -p /content && chown -R spellbook:spellbook /app /content
+
+# Declare any mounted directory safe for git, at SYSTEM level.
+#
+# The container runs as uid 1000 while a bind mount is owned by the host user,
+# so git refuses a repository created on the host with "detected dubious
+# ownership" and every command that shells out to git fails. Content that is NOT
+# yet a repository is unaffected, because spellbook inits and owns the throwaway
+# one it creates - which is why this only surfaces once the content directory is
+# version controlled, and why release tagging makes it certain.
+#
+# SYSTEM rather than --global, and this is the whole point. The global config
+# lives at /home/spellbook/.gitconfig, which is the exact path this project's own
+# README tells people to mount their host gitconfig over to supply a committer
+# identity. That mount replaced the file holding the fix, so the documented
+# invocation silently undid it and bump-version --tag still failed on a 1.24.0
+# image. safe.directory is multi-valued, so a mounted global config ADDS to the
+# system entry rather than replacing it, and both survive.
+#
+# Wildcard rather than a named path: the mount path belongs to whoever writes the
+# docker run line, and enumerating paths loses one report at a time.
+# safe.directory guards against running hooks out of someone else's repository on
+# a shared machine, and neither half applies to an ephemeral single-purpose
+# container whose only visible repository is the one the user mounted into it.
+#
+# Runs before USER spellbook because writing /etc/gitconfig needs root.
+RUN git config --system --add safe.directory '*'
 
 # Suppress demisto-sdk content repository warning (we handle pack structure ourselves)
 ENV DEMISTO_SDK_IGNORE_CONTENT_WARNING=true

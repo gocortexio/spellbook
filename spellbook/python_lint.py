@@ -21,6 +21,8 @@ from pathlib import Path
 
 import click
 
+from .xsiam_validator import ValidationIssue, render_issue
+
 
 RUFF_CONFIG = Path(__file__).parent / "assets" / "ruff_parity.toml"
 
@@ -50,7 +52,7 @@ def find_python_files(pack_path: Path) -> list[Path]:
     )
 
 
-def run_ruff_check(pack_path: Path) -> bool:
+def run_ruff_check(pack_path: Path, issues: list | None = None) -> bool:
     """Lint the pack's Python files with the store parity configuration.
 
     Packs without Python content pass immediately. A missing ruff binary
@@ -59,6 +61,8 @@ def run_ruff_check(pack_path: Path) -> bool:
 
     Args:
         pack_path: Path to the pack directory.
+        issues: When given, each failure is appended to it as a finding, so a
+            caller emitting JSON can carry it rather than leave only prose.
 
     Returns:
         True if there were no findings (or nothing to lint), False otherwise.
@@ -80,14 +84,45 @@ def run_ruff_check(pack_path: Path) -> bool:
     passed = _run_ruff(
         pack_path,
         ["check", "--no-fix", *relative],
-        "ruff found issues in Python content",
+        ValidationIssue(
+            rule_name="python_lint",
+            severity="error",
+            file_path=pack_path.name,
+            message="ruff found issues in Python content",
+            consequence=(
+                "the official content pipeline runs the same ruff check and "
+                "fails the submission on any finding"
+            ),
+            remediation=(
+                "fix each finding ruff printed above; every one names the "
+                "file, the line and the rule code"
+            ),
+        ),
+        issues,
     )
 
     formatted = _run_ruff(
         pack_path,
         ["format", "--check", *relative],
-        f"Python content is not formatted as the pipeline expects "
-        f"(run: spellbook format {pack_path.name})",
+        ValidationIssue(
+            rule_name="python_format",
+            severity="error",
+            file_path=pack_path.name,
+            message=(
+                f"Python content is not formatted as the pipeline expects "
+                f"(run: spellbook format {pack_path.name})"
+            ),
+            consequence=(
+                "the pipeline's formatter hook rewrites the files, and the "
+                "contribution gate fails whenever a hook modifies one"
+            ),
+            remediation=(
+                f"run `spellbook format {pack_path.name}`; not plain `ruff "
+                f"format`, whose default line length differs from the "
+                f"pipeline's and leaves the pack further from passing"
+            ),
+        ),
+        issues,
     )
 
     return passed and formatted
@@ -154,7 +189,20 @@ def run_ruff_format(pack_path: Path) -> bool:
     return True
 
 
-def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
+def _report(issue: ValidationIssue, issues: list | None) -> None:
+    """Print a finding in the tagged shape, and collect it when asked to."""
+    for line in render_issue(issue, "ERROR"):
+        click.echo(line)
+    if issues is not None:
+        issues.append(issue)
+
+
+def _run_ruff(
+    pack_path: Path,
+    args: list[str],
+    failure: ValidationIssue,
+    issues: list | None = None,
+) -> bool:
     """Run one ruff subcommand against the pack, returning True if it passed.
 
     Runs from the pack directory with relative paths: ruff anchors the
@@ -198,12 +246,24 @@ def _run_ruff(pack_path: Path, args: list[str], failure_message: str) -> bool:
         click.echo(result.stderr, nl=False)
 
     if result.returncode == RUFF_ABORTED:
-        click.echo(
-            f"[ERROR] {pack_path.name}: ruff could NOT RUN ({args[0]}) - it "
-            f"exited before checking anything, so this says nothing about the "
-            f"pack's Python"
-        )
+        _report(ValidationIssue(
+            rule_name="python_lint_not_run",
+            severity="error",
+            file_path=pack_path.name,
+            message=(
+                f"ruff could NOT RUN ({args[0]}) - it exited before checking "
+                f"anything, so this says nothing about the pack's Python"
+            ),
+            consequence=(
+                "the lint gate did not run, so this is a failure rather than a "
+                "pass"
+            ),
+            remediation=(
+                "ruff's own error above names the cause, most often a file it "
+                "cannot parse; fix that file and re-run"
+            ),
+        ), issues)
         return False
 
-    click.echo(f"[ERROR] {pack_path.name}: {failure_message}")
+    _report(failure, issues)
     return False

@@ -16,6 +16,8 @@ from typing import Any
 
 import yaml
 
+from . import HOUSE_FROM_VERSION
+
 
 class CorrelationImporter:
     """Import correlation rules from JSON exports to YAML files.
@@ -44,10 +46,55 @@ class CorrelationImporter:
         "user_defined_category",
     }
 
+    # Used when a rule name contains no character that survives sanitisation.
+    # Without it the stem was empty and the file became ".yml", a dotfile.
+    FALLBACK_RULE_STEM = "correlation_rule"
+
     FIELDS_TO_ADD = {
         "global_rule_id": lambda: str(uuid.uuid4()),
-        "fromversion": lambda: "8.4.0",
+        "fromversion": lambda: HOUSE_FROM_VERSION,
     }
+
+    # A tenant sets `timezone` to wherever its operators are, and the export
+    # carries that value out with the rule. It is preserved rather than
+    # stripped - see the class docstring; the Platform schedules on it, and
+    # deleting it would silently change when a rule fires.
+    #
+    # But an IANA region/city value states where this estate is, and a pack
+    # goes to a public marketplace. A reviewer on a public pull request spotted
+    # one before the estate's own release gate did. Import is the last point
+    # where the author can still decide, so it is named here rather than
+    # deleted here.
+    #
+    # UTC and the fixed offsets disclose nothing, so they are not flagged.
+    TENANT_LOCATION_FIELD = "timezone"
+    NON_DISCLOSING_TIMEZONES = {"UTC", "GMT", "Z", "UCT", "Universal", "Zulu"}
+
+    def _check_location_disclosure(self, rule: dict) -> list[str]:
+        """Warn when a rule carries a timezone that names a place.
+
+        Returns a list so a future second disclosing field costs one append
+        rather than a second call site.
+        """
+        value = rule.get(self.TENANT_LOCATION_FIELD)
+        if not isinstance(value, str):
+            return []
+
+        candidate = value.strip()
+        if not candidate or candidate in self.NON_DISCLOSING_TIMEZONES:
+            return []
+        # Fixed offsets ("+10:00", "Etc/GMT-10") name no place.
+        if candidate.startswith(("+", "-")) or candidate.startswith("Etc/"):
+            return []
+        if "/" not in candidate:
+            return []
+
+        return [
+            f"{self.TENANT_LOCATION_FIELD} is '{candidate}', which names a "
+            f"region and says where this tenant is. It is kept because the "
+            f"Platform schedules on it, but it ships in the pack - remove or "
+            f"replace it before publishing anywhere public"
+        ]
 
     def __init__(self, packs_dir: Path):
         """Initialise the importer.
@@ -103,14 +150,27 @@ class CorrelationImporter:
         correlation_dir.mkdir(exist_ok=True)
 
         results = []
+        # Filenames allocated so far in THIS batch. Two rule names that
+        # sanitise to the same stem must not resolve by one overwriting the
+        # other, which is what happened and what the summary did not say.
+        taken: set[str] = set()
         for i, rule in enumerate(rules, 1):
             try:
-                warnings = []
+                warnings = self._check_location_disclosure(rule)
                 if sanitised:
                     affected = self._check_control_characters(rule)
                     if affected:
                         warnings.append(f"control characters found in: {', '.join(affected)}")
-                result = self._process_rule(rule, correlation_dir, i, len(rules))
+                result = self._process_rule(
+                    rule, correlation_dir, i, len(rules), taken
+                )
+                expected = self._generate_filename(rule.get("name", ""))
+                if result["filename"] != expected:
+                    warnings.append(
+                        f"name collides with another rule in this import, so "
+                        f"it was written as {result['filename']} rather than "
+                        f"{expected} - both rules are kept, but check the names"
+                    )
                 result["warnings"] = warnings
                 results.append(result)
             except Exception as e:
@@ -144,7 +204,12 @@ class CorrelationImporter:
         return affected
 
     def _process_rule(
-        self, rule: dict, output_dir: Path, index: int, total: int
+        self,
+        rule: dict,
+        output_dir: Path,
+        index: int,
+        total: int,
+        taken: set[str] | None = None,
     ) -> dict:
         """Process a single correlation rule.
 
@@ -162,7 +227,7 @@ class CorrelationImporter:
             raise ValueError("Rule missing 'name' field")
 
         cleaned_rule = self._clean_rule(rule)
-        filename = self._generate_filename(name)
+        filename = self._generate_filename(name, taken)
         file_path = output_dir / filename
 
         resolved_file = file_path.resolve()
@@ -253,22 +318,48 @@ class CorrelationImporter:
             return [self._normalise_line_endings(item, field_name=field_name) for item in value]
         return value
 
-    def _generate_filename(self, name: str) -> str:
-        """Generate a valid filename from the rule name.
+    def _generate_filename(self, name: str, taken: set[str] | None = None) -> str:
+        """Generate a unique, valid filename from the rule name.
 
-        Converts spaces to underscores, dashes to triple underscores,
-        and removes invalid characters.
+        Stripping everything outside [A-Za-z0-9_-] makes the mapping lossy, so
+        distinct rule names collided: "Portkey: Key Removed" and "Portkey Key
+        Removed" both reduced to Portkey_Key_Removed.yml, the second overwrote
+        the first, and the summary still reported both as imported. A batch of
+        50 exported rules could ship 48.
+
+        A name with no ASCII alphanumerics at all - any wholly non-Latin name -
+        reduced to the empty string and produced ".yml", a hidden dotfile that
+        no later stage sees.
+
+        `taken` carries the filenames already allocated in this batch, so a
+        collision is disambiguated rather than resolved by overwriting. The
+        caller reports the disambiguation.
 
         Args:
             name: Rule name.
+            taken: Filenames already allocated in this import.
 
         Returns:
-            Valid filename with .yml extension.
+            Valid filename with .yml extension, unique within `taken`.
         """
-        filename = name.replace(" - ", "___")
-        filename = filename.replace(" ", "_")
-        filename = re.sub(r"[^a-zA-Z0-9_\-]", "", filename)
-        return f"{filename}.yml"
+        stem = name.replace(" - ", "___")
+        stem = stem.replace(" ", "_")
+        stem = re.sub(r"[^a-zA-Z0-9_\-]", "", stem)
+        # Never a dotfile, never empty.
+        stem = stem.lstrip("._-")
+        if not stem:
+            stem = self.FALLBACK_RULE_STEM
+
+        if taken is None:
+            return f"{stem}.yml"
+
+        candidate = f"{stem}.yml"
+        suffix = 2
+        while candidate in taken:
+            candidate = f"{stem}_{suffix}.yml"
+            suffix += 1
+        taken.add(candidate)
+        return candidate
 
     def _to_yaml(self, data: dict) -> str:
         """Convert dictionary to YAML string.

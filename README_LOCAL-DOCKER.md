@@ -20,6 +20,14 @@ Pull the pre-built image from GitHub Container Registry (preferred):
 docker pull ghcr.io/gocortexio/spellbook:latest
 ```
 
+`:latest` does not say which build you got. `spellbook --version` reports the
+commit an image was built from, so it can confirm what you are actually
+running: an image published by CI prints `1.25.4 (<commit>)`, while one built
+locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+published before 1.24.0 predate the build stamp and report a bare version with
+no identifier, so match the image ID to tell those apart. The stamp cannot
+distinguish two local builds from each other: every local build is unstamped.
+
 All commands in this guide use the registry image. If you prefer to build locally:
 
 ```bash
@@ -150,8 +158,12 @@ docker run --rm \
 ## Pack Attribution
 
 Every pack must carry `CONTRIBUTORS.json` at its root. `validate` fails
-without it, and `create` writes one seeded with the pack author so a new pack
-passes from the start.
+without it, so `create` always writes one and a new pack passes from the start.
+
+It is seeded with a fixed Spellbook maintainer entry, `["Simon Sigre
+(packs@gocortex.io)"]`, NOT with `--author`, which names the publishing
+organisation and belongs in `pack_metadata.json`. Replace it with your own
+before publishing.
 
 The format is demisto-sdk's: a flat JSON array of names.
 
@@ -230,6 +242,31 @@ my-content/
 ```
 
 ---
+
+## Check the Environment
+
+`check-init` reports what spellbook can see: versions, config, and whether the
+upload credentials are present.
+
+Pass the same `-e` variables you would pass to `upload`. They are read from
+inside the container, so without them `check-init` reports them as not set even
+when they are exported on your host - the one command whose job is diagnosis
+gives a confidently wrong answer:
+
+```bash
+docker run --rm \
+  -v $(pwd):/content \
+  -e DEMISTO_BASE_URL \
+  -e DEMISTO_API_KEY \
+  -e XSIAM_AUTH_ID \
+  ghcr.io/gocortexio/spellbook check-init
+```
+
+The bare `-e NAME` form passes the value through from your shell, so no secret
+is written into the command or your shell history.
+
+Missing credentials are reported as `[INFO]`, not a failure - the command still
+confirms the instance is ready for local builds.
 
 ## Upload
 
@@ -420,7 +457,7 @@ cat exported_rules.json | docker run -i --rm \
   ghcr.io/gocortexio/spellbook summon correlation MyPack
 ```
 
-For interactive paste (paste JSON then press Ctrl+D):
+For interactive paste (paste JSON, then press Ctrl+D - or Ctrl+Z then Enter on Windows):
 
 ```bash
 docker run -it --rm \
@@ -446,7 +483,7 @@ cat rule.xif | docker run -i --rm \
   ghcr.io/gocortexio/spellbook summon datamodel MyPack
 ```
 
-For interactive paste (paste the XIF then press Ctrl+D):
+For interactive paste (paste the XIF, then press Ctrl+D - or Ctrl+Z then Enter on Windows):
 
 ```bash
 docker run -it --rm -v $(pwd):/content \
@@ -462,8 +499,10 @@ hold many rules. Options:
 - `--name "Base Name"` overrides the derived name; the `ModelingRule` suffix is appended automatically.
 - `--minimal-schema` writes only `_raw_log` to the schema instead of inferring columns from the rule body.
 
-Schema columns are inferred from the fields the rule reads. Review the inferred
-types (all are written as `string`) before uploading.
+Schema columns are inferred from the fields the rule reads, so `_raw_log` is
+declared only when the rule reads it. Review the inferred types before uploading:
+most are written as `string`, and the `[WARN]` output names the columns whose
+type most likely needs correcting.
 
 ### Import a Parsing Rule
 
@@ -476,6 +515,18 @@ cat rule.xif | docker run --rm -i \
   ghcr.io/gocortexio/spellbook summon parsing MyNewPack
 ```
 
+For interactive paste (paste the XIF, then press Ctrl+D - or Ctrl+Z then Enter
+on Windows):
+
+```bash
+docker run -it --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook summon parsing MyNewPack
+```
+
+`-i` is what connects your terminal to the container. Without it Docker gives
+the container an empty stdin, so the command reads end-of-file immediately and
+exits before you can paste anything.
+
 This writes the two-file parsing rule package (`.yml` and `.xif`) with
 matching stems into `ParsingRules/`, named after the target dataset. Use
 `--name` to override the name.
@@ -484,6 +535,38 @@ Use the importer rather than creating the pair by hand. demisto-sdk finds the
 `.xif` from the `.yml` stem, so a directory holding only a `.xif` registers no
 content item at all: the pack validates, uploads and installs, and the rule
 never runs.
+
+---
+
+
+## Uplifting an Existing Repo
+
+A pack created before a value was set in `spellbook.yaml` keeps the empty value
+it was scaffolded with, and nothing carried a later change down to it.
+`sync-defaults` fills them in: `url`, `email`, `githubUser` and
+`CONTRIBUTORS.json`.
+
+```bash
+# report what would change, write nothing
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook sync-defaults --all
+
+# make the changes
+docker run --rm -v $(pwd):/content \
+  ghcr.io/gocortexio/spellbook sync-defaults --all --apply
+```
+
+Only EMPTY fields are filled. A pack holding a different value keeps it and the
+difference is reported, so a deliberate per-pack choice is never discarded.
+Nothing is written without `--apply`.
+
+`categories` is not synced. It is a per-pack decision, and `validate` already
+errors on an empty one rather than guessing a value.
+
+For findings that are not identity values - a missing `isFetchEvents`, a
+description without a full stop - `demisto-sdk validate --fix` handles a fair
+share. It rewrites the whole YAML rather than patching it, so check the diff on
+any file carrying comments.
 
 ---
 
@@ -526,6 +609,9 @@ Replace `<command>` with any of the following:
 | Bump major | bump-version PackName --major |
 | Bump and tag | bump-version PackName --tag |
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
+| Preview identity sync | sync-defaults --all |
+| Apply identity sync | sync-defaults --all --apply |
+| Rename content | rename-content PackName (temporarily disabled - refuses and prints manual steps) |
 | Import correlations | summon correlation PackName (with stdin) |
 | Import data model rule | summon datamodel PackName (with stdin) |
 | Import parsing rule | summon parsing PackName (with stdin) |

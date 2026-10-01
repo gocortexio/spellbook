@@ -22,6 +22,8 @@ import re
 
 import yaml
 
+from . import HOUSE_FROM_VERSION
+
 from spellbook.rule_importer import RuleImporterBase
 
 
@@ -38,7 +40,7 @@ INGEST_HEADER_PATTERN = re.compile(r"\[\s*INGEST\s*:", re.IGNORECASE)
 PARSING_RULE_ID_SUFFIX = "ParsingRule"
 PARSING_RULE_NAME_SUFFIX = "Parsing Rule"
 
-DEFAULT_FROM_VERSION = "8.3.0"
+DEFAULT_FROM_VERSION = HOUSE_FROM_VERSION
 
 
 class ParsingRuleImporter(RuleImporterBase):

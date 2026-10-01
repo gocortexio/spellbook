@@ -9,6 +9,7 @@ Cortex Platform content packs.
 """
 
 import hashlib
+import contextlib
 import json
 import os
 import re
@@ -19,14 +20,22 @@ from pathlib import Path
 
 import click
 
-from spellbook import __version__
-from spellbook.pack_builder import PackBuilder, EXCLUDED_PACKS
-from spellbook.pack_template import PackTemplate
+from spellbook import __version__, build_version
+from spellbook.pack_builder import (
+    EXCLUDED_PACKS,
+    PackBuilder,
+    UnreadablePackMetadata,
+)
+from spellbook.pack_template import PackAlreadyExists, PackTemplate
 from spellbook.version_manager import VersionManager
 from spellbook.instance import InstanceManager
-from spellbook.xsiam_validator import XSIAMValidator, check_modeling_schemas
+from spellbook.xsiam_validator import (
+    XSIAMValidator,
+    check_modeling_rule_activation,
+    check_modeling_schemas,
+)
 from spellbook.content_importer import CorrelationImporter
-from spellbook.modeling_importer import ModelingRuleImporter
+from spellbook.modeling_importer import DEFAULT_FROM_VERSION, ModelingRuleImporter
 from spellbook.parsing_importer import ParsingRuleImporter
 from spellbook.python_lint import run_ruff_format
 from spellbook.template_renderer import (
@@ -182,6 +191,88 @@ def normalise_version(version: str) -> str:
     return version
 
 
+# Windows consoles do not send EOF on Ctrl+D; cmd and PowerShell use Ctrl+Z
+# followed by Enter. Naming only Ctrl+D left Windows and WSL users with no way
+# to end an interactive paste.
+STDIN_EOF_HINT = "Ctrl+D, or Ctrl+Z then Enter on Windows"
+
+
+def read_stdin_or_exit(kind: str, example: str) -> str:
+    """Read piped or pasted content from stdin, or exit explaining why not.
+
+    An empty read has two very different causes and they need different advice.
+    A container started without `-i` gets /dev/null on stdin, so the read
+    returns immediately and the command appears to complete before the user can
+    paste anything - reported from WSL and Windows, where the symptom reads as
+    the prompt being skipped. The old message assumed the other cause and
+    suggested a pipe, which does not help someone running interactively.
+
+    stdin not being a TTY is what separates them: an interactive terminal is
+    one, and a `-i`-less container's /dev/null is not. A genuine pipe is not a
+    TTY either, so an empty pipe lands in the same branch - which is why that
+    message names both causes rather than asserting the -i one. Claiming a
+    missing flag to someone who passed it is the same class of confidently
+    wrong message this replaced.
+
+    Args:
+        kind: What the caller expects, e.g. "XIF" or "JSON".
+        example: A complete piped invocation to show.
+
+    Returns:
+        The content read from stdin.
+    """
+    click.echo(f"Reading from stdin (paste {kind}, then {STDIN_EOF_HINT} to finish)")
+    click.echo("")
+
+    try:
+        content = sys.stdin.read()
+    except KeyboardInterrupt:
+        click.echo("")
+        click.echo("[INFO] Cancelled")
+        sys.exit(0)
+
+    if content.strip():
+        return content
+
+    click.echo("[ERROR] No input received")
+    click.echo("")
+    if not sys.stdin.isatty():
+        click.echo("  stdin is not a terminal and delivered nothing. Either the")
+        click.echo("  container was started without -i, so it read end-of-file")
+        click.echo("  immediately, or the input that was piped in is empty.")
+        click.echo("")
+        click.echo("  To pipe a file in, add -i:")
+        click.echo(f"    {example}")
+        click.echo("")
+        click.echo("  To paste interactively, add -it and run without a pipe:")
+        click.echo("    docker run -it --rm -v \"$PWD\":/content \\")
+        click.echo("      ghcr.io/gocortexio/spellbook <command>")
+    else:
+        click.echo(f"  Paste the {kind} and press {STDIN_EOF_HINT}, or pipe it in:")
+        click.echo(f"    {example}")
+    click.echo("")
+    sys.exit(1)
+
+
+def abort_on_unreadable_metadata(error: Exception) -> None:
+    """Turn an unreadable pack_metadata.json into a refusal, not a traceback.
+
+    Every command that reaches this was about to WRITE. Refusing is the whole
+    point: the previous behaviour substituted a synthetic stub and overwrote the
+    real file with it.
+    """
+    click.echo("")
+    click.echo(f"[ERROR] {error}")
+    click.echo("")
+    click.echo("  Refusing to continue: a command that cannot read this file")
+    click.echo("  cannot safely write it, and writing would replace the pack's")
+    click.echo("  metadata with a near-empty stub.")
+    click.echo("")
+    click.echo("  Fix the JSON, then run the command again.")
+    click.echo("")
+    sys.exit(1)
+
+
 def check_git_repository(command_name: str = "bump-version") -> bool:
     """
     Check if the current directory is within a Git repository.
@@ -199,10 +290,40 @@ def check_git_repository(command_name: str = "bump-version") -> bool:
             text=True
         )
         if git_check.returncode != 0:
+            stderr = (git_check.stderr or "").strip()
+
+            # git refuses a repository it does not own, and says so on stderr
+            # while returning the same non-zero code as "there is no repository
+            # here". Reporting both as "not initialised" sent a user with a
+            # healthy repo the advice below, and running `git init` inside an
+            # existing repository is destructive. Relay what git actually said.
+            if "dubious ownership" in stderr or "safe.directory" in stderr:
+                click.echo("")
+                click.echo("[ERROR] Git refused to read the repository")
+                click.echo("")
+                for line in stderr.splitlines():
+                    click.echo(f"  {line}")
+                click.echo("")
+                click.echo("  The repository exists; git will not act on it because it is")
+                click.echo("  owned by a different user than the one running this command.")
+                click.echo("  Do NOT run 'git init' - the repository is already initialised.")
+                click.echo("")
+                click.echo("  In a container, this usually means a mounted gitconfig replaced")
+                click.echo("  the image's own. Add the setting back for this run:")
+                click.echo("")
+                click.echo("    -e GIT_CONFIG_COUNT=1 \\")
+                click.echo("    -e GIT_CONFIG_KEY_0=safe.directory \\")
+                click.echo("    -e GIT_CONFIG_VALUE_0=<the path you mounted at>")
+                click.echo("")
+                sys.exit(1)
+
             click.echo("")
             click.echo("[ERROR] Git repository not initialised")
             click.echo("")
             click.echo("  The --tag flag requires a Git repository to create commits and tags.")
+            if stderr:
+                click.echo("")
+                click.echo(f"  git said: {stderr.splitlines()[0]}")
             click.echo("")
             click.echo("  To initialise Git in your content directory:")
             click.echo("")
@@ -515,7 +636,7 @@ BANNER = r"""
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version=__version__, prog_name="Spellbook")
+@click.version_option(version=build_version(), prog_name="Spellbook")
 @click.pass_context
 def cli(ctx):
     """Spellbook - Cortex Platform Content Pack Builder
@@ -635,7 +756,12 @@ def list_packs(config):
     if packs:
         click.echo(f"Found {len(packs)} pack(s):\n")
         for pack in packs:
-            metadata = builder.read_pack_metadata(pack)
+            try:
+                metadata = builder.read_pack_metadata(pack)
+            except UnreadablePackMetadata as error:
+                # Listing is read-only, so one bad pack must not hide the rest.
+                click.echo(f"  {pack}: [ERROR] {error}")
+                continue
             version = metadata.get("currentVersion", "unknown")
             description = metadata.get("description", "")[:50]
             click.echo(f"  - {pack} (v{version})")
@@ -688,15 +814,30 @@ def build(pack_name, build_all, validate, config):
         if validate:
             for pack in packs:
                 run_xsiam_validation(builder.packs_dir, pack)
-        results = builder.build_all_packs(validate=validate)
+        try:
+            results = builder.build_all_packs(validate=validate)
+        except UnreadablePackMetadata as error:
+            abort_on_unreadable_metadata(error)
         success = sum(1 for r in results.values() if r is not None)
         failed = len(results) - success
         click.echo(f"\nBuild complete: {success} succeeded, {failed} failed")
+        if failed:
+            # Exiting 0 here made a pipeline green over an empty or partial
+            # artifacts/ directory - the exact failure README.md promises is
+            # guarded against. The single-pack branch below has always exited
+            # non-zero; --all silently did not.
+            for name, result in sorted(results.items()):
+                if result is None:
+                    click.echo(f"[ERROR] {name}: build failed")
+            sys.exit(1)
     elif pack_name:
         builder.validate_pack_exists(pack_name)
         if validate:
             run_xsiam_validation(builder.packs_dir, pack_name)
-        result = builder.build_pack(pack_name, validate=validate)
+        try:
+            result = builder.build_pack(pack_name, validate=validate)
+        except UnreadablePackMetadata as error:
+            abort_on_unreadable_metadata(error)
         if result:
             click.echo(f"\nBuild successful: {result}")
         else:
@@ -715,24 +856,75 @@ def build(pack_name, build_all, validate, config):
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def validate(pack_name, config):
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit findings as JSON for a caller that parses rather than reads."
+)
+def validate(pack_name, config, as_json):
     """Validate a content pack using demisto-sdk and XSIAM checks."""
     check_environment(config)
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
     
-    sdk_passed = builder.validate_pack(pack_name)
-    
-    xsiam_validator = XSIAMValidator(builder.packs_dir)
-    xsiam_issues = xsiam_validator.validate_pack(pack_name)
+    # With --json, stdout must carry exactly one parseable document. Routing
+    # each click.echo individually does not hold: demisto-sdk writes its own
+    # output, and so do checks several layers down, so a new print anywhere
+    # would silently break the contract again. Redirecting the stream for the
+    # whole computation is the version that cannot rot - everything human ends
+    # up on stderr, and the JSON is written to the real stdout afterwards.
+    if as_json:
+        with contextlib.redirect_stdout(sys.stderr):
+            stages_passed = builder.validate_pack(pack_name, quiet=True)
+            xsiam_validator = XSIAMValidator(builder.packs_dir)
+            xsiam_issues = xsiam_validator.validate_pack(pack_name)
+    else:
+        stages_passed = builder.validate_pack(pack_name)
+        xsiam_validator = XSIAMValidator(builder.packs_dir)
+        xsiam_issues = xsiam_validator.validate_pack(pack_name)
+
     xsiam_errors = [i for i in xsiam_issues if i.severity == "error"]
-    
+    passed = stages_passed and not xsiam_errors
+
+    if as_json:
+        # `passed: false` with `issues: []` left a caller nothing to act on and
+        # no way to say which subsystem failed, so the demisto-sdk result is
+        # named rather than folded into one boolean.
+        #
+        # validate_pack runs three stages - ruff, the pack's unit tests and
+        # demisto-sdk - and names the ones that failed. Folding them all into
+        # "demisto-sdk" blamed the SDK for a lint failure it never saw.
+        failed_stages = list(builder.last_failed_stages)
+        if not stages_passed and not failed_stages:
+            failed_stages.append("demisto-sdk")
+        if xsiam_errors:
+            failed_stages.append("xsiam-checks")
+        # Every failure in those stages is a finding, so the payload never
+        # names a failed stage with nothing in `issues` to say why.
+        issues = builder.last_stage_issues + xsiam_issues
+        click.echo(json.dumps({
+            "pack": pack_name,
+            "passed": passed,
+            # demisto-sdk's own verdict, as the name says. It was the whole
+            # of validate_pack, so a lint failure read as an SDK failure.
+            "sdk_passed": "demisto-sdk" not in failed_stages,
+            "failed_stages": failed_stages,
+            "issue_count": len(issues),
+            "error_count": len([i for i in issues if i.severity == "error"]),
+            "issues": [i.as_dict() for i in issues],
+        }, indent=2))
+        if not passed:
+            sys.exit(1)
+        return
+
     if xsiam_issues:
         click.echo("")
         click.echo(xsiam_validator.format_issues(xsiam_issues))
         click.echo("")
-    
-    if sdk_passed and not xsiam_errors:
+
+    if passed:
         click.echo("[PASS] Validation passed")
     else:
         click.echo("[FAIL] Validation failed")
@@ -838,25 +1030,46 @@ def format_pack(pack_name, config):
     help="Do not scaffold the bundled author image (Author_image.png)."
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Scaffold over a pack that already exists, replacing its metadata "
+         "and README."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def create(pack_name, description, author, template, no_author_image, config):
+def create(pack_name, description, author, template, no_author_image, force, config):
     """Create a new content pack from template.
 
     Scaffolds a placeholder Author_image.png at the pack root by default; use
     --no-author-image to skip it, or replace the file with your own branding.
     """
     template_gen = PackTemplate(config)
-    pack_path = template_gen.create_from_template(
-        template,
-        pack_name,
-        description,
-        author=author,
-        include_author_image=not no_author_image
-    )
+    try:
+        pack_path = template_gen.create_from_template(
+            template,
+            pack_name,
+            description,
+            author=author,
+            include_author_image=not no_author_image,
+            force=force,
+        )
+    except PackAlreadyExists as error:
+        click.echo("")
+        click.echo(f"[ERROR] {error}")
+        click.echo("")
+        click.echo("  Scaffolding is not idempotent: it rewrites")
+        click.echo("  pack_metadata.json and README.md from the template, which")
+        click.echo("  would discard a hand-written README and reset the version")
+        click.echo("  to 1.0.0 while ReleaseNotes/ still holds the old one.")
+        click.echo("")
+        click.echo("  Pass --force if replacing the pack is what you intend.")
+        click.echo("")
+        sys.exit(1)
     click.echo(f"[OK] Created pack at: {pack_path}")
 
 
@@ -946,7 +1159,10 @@ def set_version(pack_name, new_version, tag, message, config):
 
     builder = PackBuilder(config)
     builder.validate_pack_exists(pack_name)
-    builder.update_pack_version(pack_name, clean_version)
+    try:
+        builder.update_pack_version(pack_name, clean_version)
+    except UnreadablePackMetadata as error:
+        abort_on_unreadable_metadata(error)
     click.echo(f"[OK] Set {pack_name} version to {clean_version}")
 
     pack_path = builder.get_pack_path(pack_name)
@@ -1037,7 +1253,10 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
     else:
         increment_type = "revision"
 
-    metadata = builder.read_pack_metadata(pack_name)
+    try:
+        metadata = builder.read_pack_metadata(pack_name)
+    except UnreadablePackMetadata as error:
+        abort_on_unreadable_metadata(error)
     metadata_version = metadata.get("currentVersion", "1.0.0")
 
     if tag:
@@ -1060,7 +1279,10 @@ def bump_version(pack_name, major, minor, revision, tag, message, config):
         current_version, increment_type
     )
 
-    builder.update_pack_version(pack_name, new_version)
+    try:
+        builder.update_pack_version(pack_name, new_version)
+    except UnreadablePackMetadata as error:
+        abort_on_unreadable_metadata(error)
     click.echo(f"[OK] Bumped {pack_name} from {current_version} to {new_version}")
 
     pack_path = builder.get_pack_path(pack_name)
@@ -1274,6 +1496,22 @@ def upload(pack_path, platform, xsiam, insecure, skip_validation, strict_marketp
         click.echo(f"[ERROR] {pack_name}: modelling rule schema is not usable, "
                    f"refusing to upload")
         click.echo(f"        Fix the schema, then: python spellbook.py validate {pack_name}")
+        click.echo("")
+        sys.exit(1)
+
+    # Sibling modelling rules sharing a fromversion upload cleanly and report
+    # success for each, then only one of them ever activates. The failure is
+    # silent and total for the shadowed datasets, and it survives validate,
+    # lint, a version bump and a full reinstall, so refuse rather than warn.
+    activation_issues = check_modeling_rule_activation(input_file)
+    if activation_issues:
+        click.echo("")
+        for issue in activation_issues:
+            click.echo(f"[ERROR] {issue.file_path}: {issue.message}")
+        click.echo("")
+        click.echo(f"[ERROR] {pack_name}: modelling rules cannot all activate, "
+                   f"refusing to upload")
+        click.echo(f"        Fix the layout, then: python spellbook.py validate {pack_name}")
         click.echo("")
         sys.exit(1)
 
@@ -1529,7 +1767,11 @@ def check_init(config):
     
     click.echo("")
     if not all_ok:
-        click.echo("[FAIL] Some checks failed - see above for details")
+        # Exited 0 here, so `check-init && build --all` - the use the
+        # command's own docstring advertises - ran the build anyway.
+        click.echo("[ERROR] Some checks failed - see above for details")
+        click.echo("")
+        sys.exit(1)
     elif has_warnings:
         click.echo("[WARN] Ready for builds, but some items need attention")
     elif not upload_ready:
@@ -1575,7 +1817,8 @@ def summon_correlation(pack_name, config):
     """Import correlation rules from JSON export.
 
     Reads a JSON array of correlation rules from stdin (piped input or
-    interactive paste followed by Ctrl+D) and creates YAML files in the
+    interactive paste followed by Ctrl+D, or Ctrl+Z then Enter on Windows)
+    and creates YAML files in the
     pack's CorrelationRules directory.
 
     The JSON must be an array (even for single rules). Each rule is
@@ -1593,24 +1836,12 @@ def summon_correlation(pack_name, config):
     click.echo(f"Spellbook v{__version__}")
     click.echo("")
     click.echo(f"Summoning correlation rules into {pack_name}...")
-    click.echo("Reading from stdin (paste JSON, then Ctrl+D to finish)")
-    click.echo("")
-
-    try:
-        json_content = sys.stdin.read()
-        json_content = json_content.replace("\r\n", "\n")
-    except KeyboardInterrupt:
-        click.echo("")
-        click.echo("[INFO] Cancelled")
-        sys.exit(0)
-
-    if not json_content.strip():
-        click.echo("[ERROR] No input received")
-        click.echo("")
-        click.echo("  Pipe JSON content or paste and press Ctrl+D:")
-        click.echo("    cat rules.json | spellbook summon correlation MyPack")
-        click.echo("")
-        sys.exit(1)
+    json_content = read_stdin_or_exit(
+        "JSON",
+        "cat rules.json | docker run -i --rm -v \"$PWD\":/content \\\n"
+        "      ghcr.io/gocortexio/spellbook summon correlation MyPack",
+    )
+    json_content = json_content.replace("\r\n", "\n")
 
     importer = CorrelationImporter(builder.packs_dir)
 
@@ -1658,16 +1889,25 @@ def summon_correlation(pack_name, config):
     help="Emit only _raw_log in the schema instead of inferring columns."
 )
 @click.option(
+    "--fromversion",
+    "from_version",
+    default=DEFAULT_FROM_VERSION,
+    help="Platform version the rule declares (default: "
+         f"{DEFAULT_FROM_VERSION}). Sibling modelling rules in one pack must "
+         "not share it, or only one of them activates on the tenant."
+)
+@click.option(
     "--config",
     "-c",
     default="spellbook.yaml",
     help="Path to configuration file."
 )
-def summon_datamodel(pack_name, name, minimal_schema, config):
+def summon_datamodel(pack_name, name, minimal_schema, from_version, config):
     """Import a data model rule from XIF text.
 
     Reads raw XIF rule text from stdin (piped input or interactive paste
-    followed by Ctrl+D) and creates a modelling rule package in the pack's
+    followed by Ctrl+D, or Ctrl+Z then Enter on Windows) and creates a
+    modelling rule package in the pack's
     ModelingRules directory.
 
     The input must start with a [MODEL: dataset="..."] header, as copied from
@@ -1679,7 +1919,10 @@ def summon_datamodel(pack_name, name, minimal_schema, config):
     hold many rules without collision. Use --name to override the base name.
 
     Schema columns are inferred from the fields the rule reads but never
-    assigns. Review the inferred types before uploading.
+    assigns, so _raw_log is declared only when the rule reads it. A column
+    compared to a bareword true/false is typed boolean; everything else is
+    written as string, and a [WARN] names the columns whose type most likely
+    needs correcting. Review those before uploading.
 
     Example:
       cat rule.xif | spellbook summon datamodel MyPack
@@ -1692,23 +1935,11 @@ def summon_datamodel(pack_name, name, minimal_schema, config):
     click.echo(f"Spellbook v{__version__}")
     click.echo("")
     click.echo(f"Summoning data model rule into {pack_name}...")
-    click.echo("Reading from stdin (paste XIF, then Ctrl+D to finish)")
-    click.echo("")
-
-    try:
-        xif_content = sys.stdin.read()
-    except KeyboardInterrupt:
-        click.echo("")
-        click.echo("[INFO] Cancelled")
-        sys.exit(0)
-
-    if not xif_content.strip():
-        click.echo("[ERROR] No input received")
-        click.echo("")
-        click.echo("  Pipe XIF content or paste and press Ctrl+D:")
-        click.echo("    cat rule.xif | spellbook summon datamodel MyPack")
-        click.echo("")
-        sys.exit(1)
+    xif_content = read_stdin_or_exit(
+        "XIF",
+        "cat rule.xif | docker run -i --rm -v \"$PWD\":/content \\\n"
+        "      ghcr.io/gocortexio/spellbook summon datamodel MyPack",
+    )
 
     importer = ModelingRuleImporter(builder.packs_dir)
 
@@ -1718,6 +1949,7 @@ def summon_datamodel(pack_name, name, minimal_schema, config):
             pack_name,
             name=name,
             minimal_schema=minimal_schema,
+            from_version=from_version,
         )
     except ValueError as e:
         click.echo(f"[ERROR] {e}")
@@ -1741,6 +1973,95 @@ def summon_datamodel(pack_name, name, minimal_schema, config):
     click.echo(f"[OK] Summoned data model rule to {pack_name}")
 
 
+@cli.command("sync-defaults")
+@click.argument("pack_name", required=False)
+@click.option("--all", "all_packs", is_flag=True, default=False,
+              help="Sync every discovered pack.")
+@click.option("--apply", "apply_changes", is_flag=True, default=False,
+              help="Write the changes. Without this nothing is modified.")
+@click.option("--config", "-c", default="spellbook.yaml",
+              help="Path to configuration file.")
+def sync_defaults(pack_name, all_packs, apply_changes, config):
+    """Carry configured identity values into existing packs.
+
+    A pack created before a value was set in spellbook.yaml carries the empty
+    value it was scaffolded with. This fills those in: url, email, githubUser
+    and CONTRIBUTORS.json.
+
+    Only EMPTY fields are filled. A pack holding a different value keeps it and
+    the difference is reported, so a deliberate per-pack choice is never
+    silently discarded.
+
+    Reports what would change and writes nothing unless --apply is given.
+
+    Example:
+      spellbook sync-defaults --all
+      spellbook sync-defaults --all --apply
+    """
+    check_environment(config)
+    builder = PackBuilder(config)
+
+    if all_packs:
+        packs = builder.discover_packs()
+    elif pack_name:
+        builder.validate_pack_exists(pack_name)
+        packs = [pack_name]
+    else:
+        click.echo("[ERROR] Specify a pack name or use --all")
+        sys.exit(1)
+
+    click.echo(f"Spellbook v{__version__}")
+    click.echo("")
+    if not apply_changes:
+        click.echo("Dry run - nothing will be written. Add --apply to make changes.")
+        click.echo("")
+
+    filled = differs = skipped = 0
+    for pack in packs:
+        try:
+            records = builder.sync_pack_defaults(pack, apply=apply_changes)
+        except UnreadablePackMetadata as error:
+            # Report and skip rather than abort: under --all, one unreadable
+            # pack must not stop the rest, and skipping is what protects it.
+            click.echo(f"{pack}")
+            click.echo(f"  [ERROR] {error}")
+            click.echo("  [SKIPPED] not touched - fix the JSON and run again")
+            click.echo("")
+            skipped += 1
+            continue
+        rows = [r for r in records if r["action"] != "set"]
+        if not rows:
+            continue
+        click.echo(f"{pack}")
+        for r in rows:
+            if r["action"] == "fill":
+                filled += 1
+                verb = "FILLED" if apply_changes else "would fill"
+                click.echo(
+                    f"  [{verb}] {r['field']}: {json.dumps(r['configured'])}"
+                )
+            else:
+                differs += 1
+                click.echo(
+                    f"  [differs] {r['field']}: keeping "
+                    f"{json.dumps(r['current'])} "
+                    f"(config has {json.dumps(r['configured'])})"
+                )
+        click.echo("")
+
+    label = "[OK]" if not skipped else "[WARN]"
+    click.echo(
+        f"{label} {filled} field(s) {'filled' if apply_changes else 'to fill'}, "
+        f"{differs} left as they are"
+        + (f", {skipped} pack(s) SKIPPED as unreadable" if skipped else "")
+    )
+    if differs and not apply_changes:
+        click.echo(
+            "      a 'differs' field is never overwritten - change it by hand "
+            "if the config value is the one you want"
+        )
+
+
 @summon.command("parsing")
 @click.argument("pack_name")
 @click.option(
@@ -1760,7 +2081,8 @@ def summon_parsing(pack_name, name, config):
     """Import a parsing rule from XIF text.
 
     Reads raw XIF rule text from stdin (piped input or interactive paste
-    followed by Ctrl+D) and creates a parsing rule package in the pack's
+    followed by Ctrl+D, or Ctrl+Z then Enter on Windows) and creates a
+    parsing rule package in the pack's
     ParsingRules directory.
 
     The input must start with an [INGEST: ...] header, as copied from the
@@ -1784,23 +2106,11 @@ def summon_parsing(pack_name, name, config):
     click.echo(f"Spellbook v{__version__}")
     click.echo("")
     click.echo(f"Summoning parsing rule into {pack_name}...")
-    click.echo("Reading from stdin (paste XIF, then Ctrl+D to finish)")
-    click.echo("")
-
-    try:
-        xif_content = sys.stdin.read()
-    except KeyboardInterrupt:
-        click.echo("")
-        click.echo("[INFO] Cancelled")
-        sys.exit(0)
-
-    if not xif_content.strip():
-        click.echo("[ERROR] No input received")
-        click.echo("")
-        click.echo("  Pipe XIF content or paste and press Ctrl+D:")
-        click.echo("    cat rule.xif | spellbook summon parsing MyPack")
-        click.echo("")
-        sys.exit(1)
+    xif_content = read_stdin_or_exit(
+        "XIF",
+        "cat rule.xif | docker run -i --rm -v \"$PWD\":/content \\\n"
+        "      ghcr.io/gocortexio/spellbook summon parsing MyPack",
+    )
 
     importer = ParsingRuleImporter(builder.packs_dir)
 

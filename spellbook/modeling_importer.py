@@ -25,6 +25,8 @@ import re
 
 import yaml
 
+from . import HOUSE_FROM_VERSION
+
 from .rule_importer import RuleImporterBase
 from .xdm_fields import scan_unmappable_fields
 
@@ -48,7 +50,12 @@ MODELING_RULE_NAME_SUFFIX = "Modeling Rule"
 SCHEMA_FILE_VALID_ATTRIBUTES_TYPE = {"string", "int", "float", "datetime", "boolean"}
 DEFAULT_COLUMN_TYPE = "string"
 
-DEFAULT_FROM_VERSION = "8.3.0"
+DEFAULT_FROM_VERSION = HOUSE_FROM_VERSION
+
+# Read from a sibling rule's YAML by expression rather than by parsing it: the
+# collision check has to work against a pack someone is midway through editing,
+# where a neighbouring YAML may not parse yet.
+FROMVERSION_PATTERN = re.compile(r"^fromversion:\s*[\"']?([0-9][0-9.]*)", re.M)
 
 RAW_LOG_COLUMN = "_raw_log"
 
@@ -94,6 +101,33 @@ XQL_KEYWORDS = {
 # and bare enum literals (OUTCOME_SUCCESS, TRUE, ...) without enumerating them.
 CONSTANT_ROOT_PATTERN = re.compile(r"[a-z]")
 
+# A bareword `= true` / `= false` comparison proves the column is boolean. The
+# query parser REJECTS that comparison against a string column (ERR-014), so a
+# rule that compiled on a tenant carries the type in its own text. This is the
+# only type signal the rule body entails rather than merely suggests: measured
+# against the shipped, hand-corrected packs it was right 13 times out of 13,
+# while to_integer() on a column predicted 'int' only 16 times in 27.
+#
+# The lookbehind is load-bearing, not tidiness. Without it `tmp_is_login = true`
+# also matches its own trailing `in`, and `in` is a genuine backticked column on
+# CEF sources - declared string - so the wrong type would be written to a real
+# column. The optional backticks admit the escaped form the same way
+# BACKTICK_IDENTIFIER_PATTERN does.
+BAREWORD_BOOL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.])`?([A-Za-z_][A-Za-z0-9_]*)`?\s*=\s*(?:true|false)\b",
+    re.IGNORECASE,
+)
+
+# A numeric cast applied directly to a column. Requiring the argument to be the
+# entire call body excludes the placeholder form to_integer(0) and the wrapped
+# form to_integer(coalesce(...)), where the cast says nothing about any one
+# column. Unlike the boolean signal this is only a hint: the same syntax covers
+# columns the tenant declares int, float and string, so it names the column in a
+# warning and never sets a type.
+NUMERIC_CAST_PATTERN = re.compile(
+    r"\b(to_integer|to_float|to_number)\s*\(\s*`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\)"
+)
+
 
 def extract_datasets(xif: str) -> list[str]:
     """Return the datasets declared in an XIF, ordered and deduplicated.
@@ -121,6 +155,7 @@ class ModelingRuleImporter(RuleImporterBase):
         pack_name: str,
         name: str | None = None,
         minimal_schema: bool = False,
+        from_version: str = DEFAULT_FROM_VERSION,
     ) -> dict:
         """Import a data model rule from XIF text.
 
@@ -131,6 +166,8 @@ class ModelingRuleImporter(RuleImporterBase):
                 dataset. The 'ModelingRule' suffix is appended automatically.
             minimal_schema: Emit only the raw log column instead of inferring
                 columns from the rule body.
+            from_version: Platform version the rule declares. Sibling rules in
+                one pack must not share it, or only one of them activates.
 
         Returns:
             Result dictionary describing the package that was written.
@@ -180,11 +217,33 @@ class ModelingRuleImporter(RuleImporterBase):
                 "write through it to prevent path escape"
             )
 
+        booleans: list[str] = []
+        numeric_casts: dict[str, list[str]] = {}
+        nothing_inferred = False
+
         if minimal_schema:
             columns = {dataset: [RAW_LOG_COLUMN] for dataset in datasets}
         else:
             inferred = self.infer_columns(xif)
+            if not inferred:
+                # A rule that only assigns literals reads no column at all. An
+                # empty dataset object parses, but it maps nothing, so fall back
+                # to the raw log column and say so rather than write a schema
+                # that cannot match a record.
+                inferred = [RAW_LOG_COLUMN]
+                nothing_inferred = True
+            else:
+                booleans = self.infer_boolean_columns(xif, inferred)
+                numeric_casts = self.find_numeric_casts(xif, inferred)
             columns = {dataset: list(inferred) for dataset in datasets}
+
+        types = {
+            dataset: {
+                column: "boolean" if column in booleans else DEFAULT_COLUMN_TYPE
+                for column in cols
+            }
+            for dataset, cols in columns.items()
+        }
 
         package_dir.mkdir(parents=True, exist_ok=True)
 
@@ -193,7 +252,7 @@ class ModelingRuleImporter(RuleImporterBase):
             self._write(
                 package_dir,
                 f"{resolved_stem}.yml",
-                self._build_yaml(resolved_stem, display_name, pack_name),
+                self._build_yaml(resolved_stem, display_name, pack_name, from_version),
                 pack_path,
             )
         )
@@ -206,13 +265,29 @@ class ModelingRuleImporter(RuleImporterBase):
             self._write(
                 package_dir,
                 f"{resolved_stem}_schema.json",
-                self._build_schema(columns),
+                self._build_schema(columns, types),
                 pack_path,
             )
         )
 
         warnings = []
-        if not minimal_schema:
+        for collision in self.find_activation_collisions(
+            rules_dir, resolved_stem, from_version
+        ):
+            warnings.append(
+                f"{pack_name} already has {collision} at fromversion "
+                f"{from_version}. Two modelling rule directories at the same "
+                f"fromversion cannot both activate - one wins and the other "
+                f"models nothing. Add this dataset as another "
+                f"[MODEL: dataset=...] block in the existing rule, or give this "
+                f"one a distinct --fromversion"
+            )
+        if nothing_inferred:
+            warnings.append(
+                f"the rule reads no dataset column, so the schema declares only "
+                f"'{RAW_LOG_COLUMN}' - confirm that is what the source populates"
+            )
+        if not minimal_schema and not nothing_inferred:
             for dataset, cols in columns.items():
                 inferred_only = [c for c in cols if c != RAW_LOG_COLUMN]
                 if inferred_only:
@@ -221,11 +296,32 @@ class ModelingRuleImporter(RuleImporterBase):
                     # types and does not think to check whether the SET is
                     # right, and a column the rule reads but the schema omits
                     # fails the install with an opaque error naming no field.
+                    # Columns typed below stay on this list for the same reason:
+                    # confidence in one column's TYPE says nothing about whether
+                    # the SET is complete.
                     warnings.append(
-                        f"{dataset}: inferred {len(inferred_only)} column(s) as "
-                        f"type '{DEFAULT_COLUMN_TYPE}' - check both the types "
-                        f"AND that no column the rule reads is missing: "
-                        f"{', '.join(inferred_only)}"
+                        f"{dataset}: inferred {len(inferred_only)} column(s) - "
+                        f"check both the types AND that no column the rule reads "
+                        f"is missing: {', '.join(inferred_only)}"
+                    )
+                cast_hits = [c for c in cols if c in numeric_casts]
+                if cast_hits:
+                    detail = ", ".join(
+                        f"{c} ({'/'.join(numeric_casts[c])})" for c in cast_hits
+                    )
+                    warnings.append(
+                        f"{dataset}: {len(cast_hits)} column(s) are passed to a "
+                        f"numeric cast in the rule and are likely 'int' or "
+                        f"'float' rather than '{DEFAULT_COLUMN_TYPE}' - confirm "
+                        f"against real rows: {detail}"
+                    )
+                typed = [c for c in cols if c in booleans]
+                if typed:
+                    warnings.append(
+                        f"{dataset}: {len(typed)} column(s) typed 'boolean' from "
+                        f"a bareword true/false comparison, which the query "
+                        f"parser rejects against a string column: "
+                        f"{', '.join(typed)}"
                     )
         if len(datasets) > 1:
             warnings.append(
@@ -275,7 +371,14 @@ class ModelingRuleImporter(RuleImporterBase):
         Function names are excluded structurally by ignoring any identifier
         followed by an opening bracket.
 
-        The raw log column is always included.
+        The raw log column is included only when the rule actually reads it.
+        It used to be injected unconditionally, which was wrong for every
+        collector-ingested source: those datasets store the event parsed into
+        top-level columns and leave _raw_log null, so the schema declared a
+        column that is never populated and that the rule never reads. None of
+        the shipped API packs declares it. Nothing special is needed to find it
+        when the rule DOES read it - it is not an XQL keyword and it has
+        lowercase letters, so ordinary inference already yields it.
         """
         body = self._strip_noise(xif)
 
@@ -315,10 +418,62 @@ class ModelingRuleImporter(RuleImporterBase):
                 continue
             columns.append(root)
 
+        # Conventionally first when the rule reads it, so a schema for a raw
+        # text source still opens on the column that carries the event.
         if RAW_LOG_COLUMN in columns:
             columns.remove(RAW_LOG_COLUMN)
-        columns.insert(0, RAW_LOG_COLUMN)
+            columns.insert(0, RAW_LOG_COLUMN)
         return columns
+
+    def infer_boolean_columns(self, xif: str, columns: list[str]) -> list[str]:
+        """Return the columns the rule proves are boolean.
+
+        Restricted to names already established as columns by ``infer_columns``,
+        so the type can only ever land on something the dataflow pass already
+        accepted as read-but-never-assigned. That containment is what makes the
+        three ERR-014 carve-outs fall out of existing machinery rather than
+        needing their own cases:
+
+        - ``col = "true"`` never matches, because _strip_noise deletes string
+          literals before the scan.
+        - ``to_boolean(col) = true`` never matches, because no bare identifier
+          precedes the ``=``.
+        - ``alter col = true`` is an assignment at bracket depth zero, so
+          _assigned_names has already excluded it from ``columns``. Stage
+          parameters (``append = true``) are XQL keywords and excluded too.
+
+        The real comparisons all sit inside ``if(...)`` at depth above zero,
+        which is exactly where _assigned_names treats a name as read.
+        """
+        allowed = set(columns)
+        found = []
+        for match in BAREWORD_BOOL_PATTERN.finditer(self._strip_noise(xif)):
+            name = match.group(1)
+            if name in allowed and name not in found:
+                found.append(name)
+        return found
+
+    def find_numeric_casts(self, xif: str, columns: list[str]) -> dict[str, list[str]]:
+        """Return columns passed to a numeric cast, mapped to the casts used.
+
+        Advisory only. Against the shipped packs the same syntax covers columns
+        the tenant declares int (16), string (6) and float (5), and no gate
+        computable from the rule text separates them: a CEF rule that never
+        mentions _raw_log still casts two columns the tenant declares float.
+        Writing a type on 59% odds risks an opaque install failure, whereas the
+        'string' default is recoverable at query time - so this names the
+        columns for the author and leaves the type alone.
+        """
+        allowed = set(columns)
+        found: dict[str, list[str]] = {}
+        for match in NUMERIC_CAST_PATTERN.finditer(self._strip_noise(xif)):
+            function, name = match.group(1), match.group(2)
+            if name not in allowed or name == RAW_LOG_COLUMN:
+                continue
+            casts = found.setdefault(name, [])
+            if function not in casts:
+                casts.append(function)
+        return found
 
     def _assigned_names(self, body: str) -> set[str]:
         """Return the names the rule assigns, as opposed to the ones it reads.
@@ -408,7 +563,48 @@ class ModelingRuleImporter(RuleImporterBase):
             )
         return name
 
-    def _build_yaml(self, stem: str, display_name: str, pack_name: str) -> str:
+    def find_activation_collisions(
+        self, rules_dir, resolved_stem: str, from_version: str
+    ) -> list[str]:
+        """Return sibling rule directories that already claim this version.
+
+        Two modelling rule directories in one pack declaring the same
+        fromversion cannot both activate: the tenant picks one and the rest
+        install, bind to their datasets and model nothing. Shipped content uses
+        sibling directories only as version variants, giving each a distinct
+        fromversion, which is why this compares versions rather than counting
+        directories.
+
+        Saying it here rather than only at upload matters because this is the
+        moment the author can still fold the new dataset into the existing
+        rule's .xif, before a pack is built around the broken shape.
+        """
+        if not rules_dir.is_dir():
+            return []
+
+        collisions = []
+        for package in sorted(rules_dir.iterdir()):
+            # Rewriting the rule's own directory is not a collision.
+            if not package.is_dir() or package.name == resolved_stem:
+                continue
+            for yml_path in sorted(package.glob("*.yml")):
+                try:
+                    text = yml_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                match = FROMVERSION_PATTERN.search(text)
+                if match and match.group(1) == from_version:
+                    collisions.append(package.name)
+                break
+        return collisions
+
+    def _build_yaml(
+        self,
+        stem: str,
+        display_name: str,
+        pack_name: str,
+        from_version: str = DEFAULT_FROM_VERSION,
+    ) -> str:
         """Build the rule YAML.
 
         The rules and schema keys must be empty strings (validator MR101); the
@@ -424,7 +620,7 @@ class ModelingRuleImporter(RuleImporterBase):
         data = {
             "id": stem,
             "name": display_name,
-            "fromversion": DEFAULT_FROM_VERSION,
+            "fromversion": from_version,
             "tags": pack_name,
             "rules": "",
             "schema": "",
@@ -437,15 +633,21 @@ class ModelingRuleImporter(RuleImporterBase):
         """Return the rule text with a single trailing newline."""
         return xif.rstrip("\n") + "\n"
 
-    def _build_schema(self, columns: dict[str, list[str]]) -> str:
+    def _build_schema(
+        self, columns: dict[str, list[str]], types: dict[str, dict[str, str]]
+    ) -> str:
         """Build the schema JSON.
 
         One top-level key per dataset declared in the XIF, which is what
-        validator MR107 compares.
+        validator MR107 compares. Every type falls back to the default, so a
+        column the type pass said nothing about is still declared.
         """
         schema = {
             dataset: {
-                column: {"type": DEFAULT_COLUMN_TYPE, "is_array": False}
+                column: {
+                    "type": types.get(dataset, {}).get(column, DEFAULT_COLUMN_TYPE),
+                    "is_array": False,
+                }
                 for column in cols
             }
             for dataset, cols in columns.items()

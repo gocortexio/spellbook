@@ -36,6 +36,14 @@ Pull the pre-built image from GitHub Container Registry:
 docker pull ghcr.io/gocortexio/spellbook:latest
 ```
 
+`:latest` does not say which build you got. `spellbook --version` reports the
+commit an image was built from, so it can confirm what you are actually
+running: an image published by CI prints `1.25.4 (<commit>)`, while one built
+locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+published before 1.24.0 predate the build stamp and report a bare version with
+no identifier, so match the image ID to tell those apart. The stamp cannot
+distinguish two local builds from each other: every local build is unstamped.
+
 This command works identically in PowerShell and Command Prompt.
 
 ---
@@ -197,6 +205,46 @@ If no packs are discovered, `build --all` and `validate-all` exit with a
 grepable `[ERROR]` rather than reporting success, so a missing volume mount in
 CI cannot produce a green pipeline and an empty release. SamplePack is excluded
 from discovery; build it directly by name.
+
+---
+
+## Check the Environment
+
+`check-init` reports what spellbook can see: versions, config, and whether the
+upload credentials are present.
+
+Pass the same `-e` variables you would pass to `upload`. They are read from
+inside the container, so without them `check-init` reports them as not set even
+when they are set in your shell - the one command whose job is diagnosis gives a
+confidently wrong answer.
+
+### PowerShell
+
+```powershell
+docker run --rm `
+  -v ${PWD}:/content `
+  -e DEMISTO_BASE_URL `
+  -e DEMISTO_API_KEY `
+  -e XSIAM_AUTH_ID `
+  ghcr.io/gocortexio/spellbook check-init
+```
+
+### Command Prompt
+
+```cmd
+docker run --rm ^
+  -v %cd%:/content ^
+  -e DEMISTO_BASE_URL ^
+  -e DEMISTO_API_KEY ^
+  -e XSIAM_AUTH_ID ^
+  ghcr.io/gocortexio/spellbook check-init
+```
+
+The bare `-e NAME` form passes the value through from your shell, so no secret
+is written into the command or your console history.
+
+Missing credentials are reported as `[INFO]`, not a failure - the command still
+confirms the instance is ready for local builds.
 
 ---
 
@@ -504,6 +552,60 @@ type rule.xif | docker run --rm -i ^
   ghcr.io/gocortexio/spellbook summon parsing MyNewPack
 ```
 
+For interactive paste, add `-t` and drop the pipe (paste the XIF, then press
+**Ctrl+Z followed by Enter**):
+
+```powershell
+docker run -it --rm -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook summon parsing MyNewPack
+```
+
+`-i` is what connects your console to the container. Without it Docker gives the
+container an empty stdin, so the command reads end-of-file immediately and exits
+before you can paste anything - it looks as though the prompt was skipped.
+
+---
+
+
+## Uplifting an Existing Repo
+
+A pack created before a value was set in `spellbook.yaml` keeps the empty value
+it was scaffolded with, and nothing carried a later change down to it.
+`sync-defaults` fills them in: `url`, `email`, `githubUser` and
+`CONTRIBUTORS.json`.
+
+### PowerShell
+
+```powershell
+docker run --rm -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook sync-defaults --all
+
+docker run --rm -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook sync-defaults --all --apply
+```
+
+### Command Prompt
+
+```cmd
+docker run --rm -v %cd%:/content ^
+  ghcr.io/gocortexio/spellbook sync-defaults --all
+
+docker run --rm -v %cd%:/content ^
+  ghcr.io/gocortexio/spellbook sync-defaults --all --apply
+```
+
+Only EMPTY fields are filled. A pack holding a different value keeps it and the
+difference is reported, so a deliberate per-pack choice is never discarded.
+Nothing is written without `--apply`.
+
+`categories` is not synced. It is a per-pack decision, and `validate` already
+errors on an empty one rather than guessing a value.
+
+For findings that are not identity values - a missing `isFetchEvents`, a
+description without a full stop - `demisto-sdk validate --fix` handles a fair
+share. It rewrites the whole YAML rather than patching it, so check the diff on
+any file carrying comments.
+
 ---
 
 ## Command Reference
@@ -554,6 +656,9 @@ Replace `<command>` with any of the following:
 | Bump major | bump-version PackName --major |
 | Bump and tag | bump-version PackName --tag |
 | Bump with message | bump-version PackName --tag -m "Closes #123" |
+| Preview identity sync | sync-defaults --all |
+| Apply identity sync | sync-defaults --all --apply |
+| Rename content | rename-content PackName (temporarily disabled - refuses and prints manual steps) |
 | Import correlations | summon correlation PackName (with stdin) |
 | Import data model rule | summon datamodel PackName (with stdin) |
 | Generate from template | summon template intel_retrohunt PackName --set KEY=VALUE |
@@ -578,7 +683,8 @@ Get-Content exported_rules.json | docker run -i --rm `
   ghcr.io/gocortexio/spellbook summon correlation MyPack
 ```
 
-For interactive paste (paste JSON then press Ctrl+D):
+For interactive paste (paste JSON, then press **Ctrl+Z followed by Enter** -
+Ctrl+D does not signal end-of-file in cmd or PowerShell):
 
 ```powershell
 docker run -it --rm `
@@ -623,11 +729,21 @@ type rule.xif | docker run -i --rm ^
   ghcr.io/gocortexio/spellbook summon datamodel MyPack
 ```
 
+For interactive paste, add `-t` and drop the pipe (paste the XIF, then press
+**Ctrl+Z followed by Enter**):
+
+```powershell
+docker run -it --rm -v ${PWD}:/content `
+  ghcr.io/gocortexio/spellbook summon datamodel MyPack
+```
+
 The command writes the three-file modelling rule package (`.yml`, `.xif`,
 `_schema.json`) into `Packs/MyPack/ModelingRules/`, named after the dataset by
 default. Use `--name "Base Name"` to override the name, or `--minimal-schema` to
-write only `_raw_log` instead of inferring columns. Review the inferred column
-types before uploading.
+write only `_raw_log` instead of inferring columns. `_raw_log` is declared only
+when the rule reads it. Review the inferred column types before uploading: most
+are written as `string`, and the `[WARN]` output names the columns whose type
+most likely needs correcting.
 
 ---
 

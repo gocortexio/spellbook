@@ -15,12 +15,38 @@ from pathlib import Path
 import click
 import yaml
 
+from . import HOUSE_FROM_VERSION
+
 
 # The author image is bundled inside the package so it ships in both the
 # container (COPY spellbook/) and the wheel. demisto-sdk auto-detects an
 # author image at the pack root named Author_image.png.
 AUTHOR_IMAGE_FILENAME = "Author_image.png"
 AUTHOR_IMAGE_SOURCE = Path(__file__).parent / "assets" / AUTHOR_IMAGE_FILENAME
+
+
+# The contributor credit a newly scaffolded pack carries.
+#
+# Deliberately a fixed value rather than the pack author. Those are two
+# different things: `author` names the organisation publishing the pack
+# (GoCortexIO), while this names the person accountable for the content, and a
+# pack routinely wants both. Deriving this from --author made it impossible to
+# set them differently, which is the shape the estate actually needs and which
+# its release gate pins.
+#
+# It is this project's own attribution by decision of the repository owner:
+# an unedited pack credits the maintainer, and anyone who wants different
+# credit edits one line. The address is a role account, not a personal one.
+DEFAULT_CONTRIBUTORS = ["Simon Sigre (packs@gocortex.io)"]
+
+class PackAlreadyExists(Exception):
+    """Raised when `create` is asked to scaffold over an existing pack.
+
+    Scaffolding is not idempotent: it rewrites pack_metadata.json and README.md
+    from the template. Doing that to a pack under development silently discards
+    a hand-written README and regresses currentVersion to 1.0.0, leaving a
+    ReleaseNotes directory that disagrees with the metadata.
+    """
 
 
 class PackTemplate:
@@ -91,7 +117,8 @@ class PackTemplate:
         author: str | None = None,
         categories: list[str] | None = None,
         create_directories: list[str] | None = None,
-        include_author_image: bool = True
+        include_author_image: bool = True,
+        force: bool = False,
     ) -> Path:
         """
         Create a new pack with standard structure.
@@ -101,12 +128,17 @@ class PackTemplate:
             description: Short description of the pack.
             author: Author name (uses default if not provided).
             categories: List of categories.
-            create_directories: Specific directories to create.
+            create_directories: Content directories to create. None creates
+                CONTENT_DIRECTORIES; an empty list creates none.
             include_author_image: Scaffold the bundled author image at the
                 pack root.
+            force: Scaffold over a pack that already exists.
 
         Returns:
             Path to the created pack directory.
+
+        Raises:
+            PackAlreadyExists: If the pack is already there and force is False.
         """
         pack_path = (self.packs_dir / pack_name).resolve()
         try:
@@ -115,6 +147,17 @@ class PackTemplate:
             raise ValueError(
                 f"pack_name '{pack_name}' resolves outside the packs directory"
             )
+        # Refuse an existing pack rather than scaffolding over it. This used
+        # to overwrite pack_metadata.json and README.md unconditionally, so a
+        # re-run of a scaffolding step - the natural move for an agent unsure
+        # whether a pack exists - replaced a hand-written README, reset the
+        # version to 1.0.0 while ReleaseNotes/ still held the old one, and
+        # reported success.
+        if not force and (pack_path / "pack_metadata.json").exists():
+            raise PackAlreadyExists(
+                f"{pack_name} already exists at {pack_path}"
+            )
+
         pack_path.mkdir(parents=True, exist_ok=True)
 
         self._create_metadata(
@@ -131,12 +174,19 @@ class PackTemplate:
 
         self._create_secrets_ignore(pack_path)
 
-        self._create_contributors(pack_path, author)
+        self._create_contributors(pack_path)
 
         if include_author_image:
             self._create_author_image(pack_path)
 
-        directories = create_directories or self.CONTENT_DIRECTORIES
+        # An empty list means no content folders, so test for None rather
+        # than truthiness: `[] or CONTENT_DIRECTORIES` gave the minimal
+        # template all sixteen, each a .gitkeep validate then warns about.
+        directories = (
+            self.CONTENT_DIRECTORIES
+            if create_directories is None
+            else create_directories
+        )
         for directory in directories:
             dir_path = pack_path / directory
             dir_path.mkdir(exist_ok=True)
@@ -184,7 +234,10 @@ class PackTemplate:
                 "marketplaces",
                 ["xsoar", "marketplacev2", "platform"]
             ),
-            "githubUser": []
+            # Read from config like every other identity field. It was
+            # hardcoded empty, so no amount of configuration could populate it
+            # and a marketplace reviewer asked for it on a submitted pack.
+            "githubUser": self.defaults.get("githubUser", [])
         }
 
         metadata_path = pack_path / "pack_metadata.json"
@@ -274,31 +327,29 @@ For support, please refer to the pack metadata for contact information.
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_content)
 
-    def _create_contributors(self, pack_path: Path, author: str | None) -> None:
-        """Write CONTRIBUTORS.json, seeded with the pack author.
+    def _create_contributors(self, pack_path: Path) -> None:
+        """Write CONTRIBUTORS.json with the default contributor credit.
 
         demisto-sdk reads this file as a flat list of contributor names and
         renders them into the pack README, so the format is an array of
         strings and nothing else. Validation requires it, so scaffolding it
-        keeps a freshly created pack passing; edit it to add reviewers and
-        maintainers.
-        """
-        name = (author or self.defaults.get("author", "")).strip()
-        if not name:
-            # Writing [] would produce a pack that fails our own validation
-            # the moment it is created. Say so here, and leave the file out
-            # so validate reports the missing-file case, whose message
-            # carries the example to copy.
-            click.echo(
-                "[WARN] no author configured, so no CONTRIBUTORS.json was "
-                "written - pass --author, or set defaults.author in "
-                "spellbook.yaml, or add the file by hand"
-            )
-            return
+        keeps a freshly created pack passing; edit it to credit whoever
+        actually maintains the content.
 
+        NOT derived from --author. That flag names the publishing organisation
+        and belongs in pack_metadata.json; this names the person accountable
+        for the content. A pack commonly wants both, and while one input drove
+        both fields it was impossible to set them differently - `create -a
+        GoCortexIO` produced ["GoCortexIO"] here, which the content estate's
+        release gate then refused, on a file the author had never opened.
+
+        Because the value is fixed there is no longer an unset case: the file
+        is always written, and a freshly created pack always passes the
+        contributor checks.
+        """
         path = pack_path / "CONTRIBUTORS.json"
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump([name], handle, indent=4)
+            json.dump(list(DEFAULT_CONTRIBUTORS), handle, indent=4)
             handle.write("\n")
 
     def _create_pack_ignore(self, pack_path: Path) -> None:
@@ -359,7 +410,7 @@ dataset: alerts
 description: Detects multiple failed authentication attempts from a single source within a short time window indicating a potential brute force attack.
 drilldown_query_timeframe: ALERT
 execution_mode: REAL_TIME
-fromversion: 8.4.0
+fromversion: {HOUSE_FROM_VERSION}
 global_rule_id: {global_id}
 investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
 mapping_strategy: CUSTOM
@@ -405,7 +456,7 @@ dataset: alerts
 description: Detects multiple failed authentication attempts from a single source using scheduled execution. Runs every 10 minutes with a 15 minute search window.
 drilldown_query_timeframe: ALERT
 execution_mode: SCHEDULED
-fromversion: 8.4.0
+fromversion: {HOUSE_FROM_VERSION}
 global_rule_id: {global_id}
 investigation_query_link: dataset = {dataset} | filter user = $xdm.target.user.username
 mapping_strategy: CUSTOM
@@ -448,7 +499,7 @@ xql_query: |
 
         rule_yml = f"""id: {rule_id}
 name: {pack_name} Parsing Rule
-fromversion: 6.10.0
+fromversion: {HOUSE_FROM_VERSION}
 tags: []
 rules: ''
 samples: ''
@@ -488,7 +539,7 @@ filter _raw_log ~= "\\d{{4}}-\\d{{2}}-\\d{{2}}T\\d{{2}}:\\d{{2}}:\\d{{2}}"
 
         # Validator MR108 requires the id to end with 'ModelingRule' and the
         # name to end with 'Modeling Rule'.
-        rule_yml = f"""fromversion: 6.10.0
+        rule_yml = f"""fromversion: {HOUSE_FROM_VERSION}
 id: {pack_name}ModelingRule
 name: {pack_name} Modeling Rule
 rules: ''
@@ -697,7 +748,7 @@ alter
         the playbook's id, and this sample ships no playbook, so any
         trigger here would bind to nothing. The scaffold used to emit one
         carrying a PLAYBOOK_ID_HERE placeholder, which validation now
-        rejects. The reference shape is in XSIAM_CONTENT_GUIDELINES.
+        rejects.
         All templates follow the official demisto-sdk schemas and are based
         on working examples from the demisto/content repository.
         """
@@ -718,7 +769,8 @@ alter
         pack_name: str,
         description: str = "",
         author: str | None = None,
-        include_author_image: bool = True
+        include_author_image: bool = True,
+        force: bool = False,
     ) -> Path:
         """
         Create a pack from a predefined template.
@@ -747,5 +799,6 @@ alter
             description,
             author=author,
             create_directories=directories,
-            include_author_image=include_author_image
+            include_author_image=include_author_image,
+            force=force,
         )
