@@ -24,8 +24,8 @@ docker pull ghcr.io/gocortexio/spellbook:latest
 
 `:latest` does not say which build you got. `spellbook --version` reports the
 commit an image was built from, so it can confirm what you are actually
-running: an image published by CI prints `1.25.4 (<commit>)`, while one built
-locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+running: an image published by CI prints `1.25.9 (<commit>)`, while one built
+locally with `docker build` prints `1.25.9 (local build, unstamped)`. Images
 published before 1.24.0 predate the build stamp and report a bare version with
 no identifier, so match the image ID to tell those apart. The stamp cannot
 distinguish two local builds from each other: every local build is unstamped.
@@ -82,10 +82,11 @@ A pack with no Python is unaffected by the last three, so a rules-only pack
 usually needs only the `CONTRIBUTORS.json` line.
 
 Later releases added more. `validate` now also refuses an empty `categories`,
-an integration YAML whose first root key is not `name` or `display`, a
-correlation drill-down with no pipe stages, and several demisto-sdk validators
-the default configuration never selected (`ST111`, `BA133`, `IN169`, `MR108`
-among them). Each finding prints what is wrong, why it matters and the edit that
+a correlation drill-down with no pipe stages, licence codes such as `C1` in an
+integration's `supportedModules`, and several
+demisto-sdk validators the default configuration never selected (`ST111`,
+`BA133`, `IN169`, `MR108` among them). It also warns when the current release
+note's headers would fail the store once the pack is merged. Each finding prints what is wrong, why it matters and the edit that
 fixes it, so the output tells you what to do rather than only what it saw.
 
 `CONTRIBUTORS.json` no longer needs the manual line above. Set the identity

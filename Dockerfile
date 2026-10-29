@@ -9,7 +9,7 @@
 # rather than whatever pip would resolve on the day of the build.
 FROM python:3.11-alpine AS requirements
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /usr/local/bin/uv
 
 WORKDIR /build
 COPY pyproject.toml uv.lock ./
@@ -20,7 +20,7 @@ RUN uv export --frozen --no-dev --no-emit-project \
 # Stage 2: runtime image
 FROM python:3.11-alpine
 
-ARG SPELLBOOK_VERSION=1.25.4
+ARG SPELLBOOK_VERSION=1.25.9
 # The commit the image was built from. CI passes it (docker/metadata-action
 # already computes the SHA for the OCI label); a plain `docker build` leaves it
 # empty, and empty is meaningful - it is how `--version` tells an unstamped

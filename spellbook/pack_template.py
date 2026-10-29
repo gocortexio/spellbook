@@ -374,17 +374,14 @@ For support, please refer to the pack metadata for contact information.
             f.write(content)
 
     def _create_secrets_ignore(self, pack_path: Path) -> None:
-        """Create .secrets-ignore file."""
-        content = """# Secrets ignore file
-# Add words that should be allowed in secret scanning
+        """Create an empty .secrets-ignore file.
 
-# Example allowed words:
-# example_api_key
-# test_token
-"""
-        secrets_path = pack_path / ".secrets-ignore"
-        with open(secrets_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        Empty, as demisto-sdk init writes it. The file has no comment syntax:
+        demisto-sdk's secrets scanner takes every line as a literal allow-list
+        entry, so the commented template this used to write allow-listed its
+        own prose, and every pack shipped it to review unchanged.
+        """
+        (pack_path / ".secrets-ignore").write_text("", encoding="utf-8")
 
     def _create_correlation_rule(self, pack_path: Path, pack_name: str) -> None:
         """Create sample correlation rule for Cortex Platform.
@@ -622,12 +619,6 @@ alter
 ##### {pack_name} Example
 
 - Initial release of example report.
-
-#### Triggers
-
-##### {pack_name} Alert Handler
-
-- Initial release of alert handler trigger.
 """
 
         with open(notes_dir / "1_0_0.md", "w", encoding="utf-8") as f:

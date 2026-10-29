@@ -47,7 +47,7 @@ from spellbook.template_renderer import (
 TASK_UUID_PATTERN = re.compile(r"^TASK_UUID_\d+$")
 
 
-PINNED_SDK_VERSION = "1.39.5"
+PINNED_SDK_VERSION = "1.39.13"
 
 # demisto-sdk declares this upload flag with an underscore, not a hyphen
 # (see demisto_sdk/commands/upload/upload_setup.py). Passing the hyphenated
@@ -434,8 +434,12 @@ def create_release_notes(pack_name: str, version: str, pack_path: Path, message:
     Create a release notes file for a pack version.
 
     When --tag and --message are both provided, the release notes file
-    contains the commit message as a simple changelog entry. Otherwise,
-    the file contains the full placeholder scaffold for manual editing.
+    contains the commit message as a pack-wide entry under
+    `## <pack display name>`, the form demisto-sdk's update-release-notes
+    writes. It used to go under `#### <PackFolder>`, which is not a content
+    type, so demisto/content's CI rejects it (RN113) once the pack is merged.
+    Otherwise, the file contains the full placeholder scaffold for manual
+    editing.
 
     Args:
         pack_name: Name of the pack.
@@ -454,37 +458,33 @@ def create_release_notes(pack_name: str, version: str, pack_path: Path, message:
     release_notes_path = release_notes_dir / version_filename
 
     if not release_notes_path.exists():
+        display_name = pack_name
+        try:
+            metadata = json.loads((pack_path / "pack_metadata.json").read_text(encoding="utf-8"))
+            if isinstance(metadata, dict) and isinstance(metadata.get("name"), str) and metadata["name"].strip():
+                display_name = metadata["name"].strip()
+        except (OSError, UnicodeDecodeError, ValueError):
+            pass
         if message and tag:
-            release_content = f"#### {pack_name}\n\n- {message}\n"
+            release_content = f"## {display_name}\n\n- {message}\n"
             with open(release_notes_path, "w", encoding="utf-8") as f:
                 f.write(release_content)
             click.echo(f"[OK] Created release notes: ReleaseNotes/{version_filename}")
             click.echo("[INFO] Release notes populated from commit message")
         else:
-            release_content = f"""#### Parsing Rules
-
-##### {pack_name} Parsing Rule
-
-- (Describe parsing rule changes here)
-
-#### Modeling Rules
-
-##### {pack_name} Modeling Rule
-
-- (Describe modelling rule changes here)
-
-#### Correlation Rules
-
-##### {pack_name} - (Rule Name)
-
-- (Describe correlation rule changes here)
-"""
+            # A pack-wide placeholder. The scaffold used to name a parsing
+            # rule, a modelling rule and a correlation rule by invented names,
+            # whether or not the pack had them, and the store rejects an item
+            # header that matches no item (RN114).
+            release_content = f"## {display_name}\n\n- (Describe the changes in this version.)\n"
             with open(release_notes_path, "w", encoding="utf-8") as f:
                 f.write(release_content)
             click.echo(f"[OK] Created release notes: ReleaseNotes/{version_filename}")
             click.echo("")
             click.echo("[INFO] Remember to update the release notes with your changes:")
             click.echo(f"       {release_notes_path}")
+            click.echo("       For changes to particular items, list them under a content")
+            click.echo("       type instead: `#### Correlation Rules` then `##### <rule name>`.")
 
     return release_notes_path
 

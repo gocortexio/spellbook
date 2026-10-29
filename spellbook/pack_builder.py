@@ -63,14 +63,19 @@ SDK_ADDITIONAL_VALIDATIONS = [
 #
 # Two upstream codes were measured and deliberately NOT selected:
 #
-#   ST110 - fires 27 times on one pack, every hit "suppression_fields: str type
-#           expected". That is the false positive this module already documents
-#           and filters (LIST_TOLERANT_FIELDS): the strict model declares the
-#           field a string, the platform stores an array, and demisto-sdk itself
-#           accepts one. Selecting it would reintroduce a finding already judged
-#           wrong.
+#   ST110 - applies demisto-sdk's strict models. demisto/content's CI selects
+#           it as an error a pack cannot ignore, and it fails a correlation
+#           rule carrying platform fields (action, alert_domain, alert_type,
+#           is_enabled, timezone) or a list suppression_fields - every rule a
+#           tenant export produces. The estate keeps those for the tenant's
+#           behaviour and ignores the store requirement (2026-10-22), so ST110
+#           stays unselected; xsiam_validator applies the same models natively,
+#           exempting those shapes (PLATFORM_CORRELATION_FIELDS) and reporting
+#           anything else as a warning.
 #   ST114 - reports the same licence codes BA133 already reports. Redundant, and
-#           a second finding for one defect reads as two defects.
+#           a second finding for one defect reads as two defects. Licence codes
+#           in an integration are now also caught natively, as
+#           supported_modules_invalid.
 
 # BA131 (supportedModules) is deliberately NOT selected, despite the review bot
 # raising it. It fires on two different things and only one of them is ours:
@@ -85,7 +90,8 @@ SDK_ADDITIONAL_VALIDATIONS = [
 # for the finding in 20 of them - including packs with no integration at all.
 # Selecting it would fail validate on packs whose files do not contain the word
 # supportedModules anywhere, for a value they never wrote. Revisit if the estate
-# ever declares supportedModules explicitly on rule items.
+# ever declares supportedModules explicitly on rule items. The first case, the
+# real defect, is checked natively as supported_modules_invalid.
 
 # SDK defaults that spellbook checks natively instead of selecting, mapped to
 # the function that stands in for each. validate_pack runs every one of them
@@ -898,7 +904,7 @@ class PackBuilder:
                     "rather than a pass - a missing gate is not a clean pack"
                 ),
                 remediation=(
-                    "install it with pip install 'demisto-sdk==1.39.5', or use "
+                    "install it with pip install 'demisto-sdk==1.39.13', or use "
                     "the Docker image, which bundles it"
                 ),
             ), quiet)

@@ -334,15 +334,16 @@ class ModelingRuleImporter(RuleImporterBase):
         for finding in scan_unmappable_fields(xif):
             if finding["assignment"]:
                 warnings.append(
-                    f"line {finding['line']}: '{finding['field']}' is a "
-                    f"platform-derived XDM field and cannot be a mapping target - "
-                    f"validation will fail until the assignment is removed"
+                    f"line {finding['line']}: '{finding['field']}' is not part "
+                    f"of the data model a modelling rule maps to and cannot be a "
+                    f"mapping target - validation will fail until the "
+                    f"assignment is removed"
                 )
             else:
                 warnings.append(
-                    f"line {finding['line']}: '{finding['field']}' is a "
-                    f"platform-derived XDM field that a data model rule cannot "
-                    f"populate - confirm this occurrence is intentional"
+                    f"line {finding['line']}: '{finding['field']}' is an XDM "
+                    f"field a data model rule cannot populate - confirm this "
+                    f"occurrence is intentional"
                 )
 
         return {

@@ -3,25 +3,39 @@
 """
 XDM Field Knowledge Module
 
-Records XDM fields that the Cortex Platform derives itself and therefore
-rejects as mapping targets in data model rules. The fields are valid in the
-XDM schema and may be referenced elsewhere (correlation rule XQL,
-investigation queries), but assigning to one in a [MODEL] rule leaves the
-pack in an orphaned state on the tenant: the rule installs but never
-compiles.
+Records XDM fields that a data model rule may not assign. Each is a real
+path in the published XDM schema, so every offline check that only asks "is
+this a real field?" passes it, but it belongs to a data model other than the
+event model a [MODEL] rule maps to. The tenant refuses the rule ("<field> is
+not part of the selected data model"), and a pack carrying it fails to
+install or installs without compiling. The fields may still be referenced
+elsewhere (correlation rule XQL, investigation queries).
 
 demisto-sdk has no registry of XDM field assignability, so this list is
 maintained here from field-verified failures, in the same spirit as the
-XSIAM validator rules. Every entry must be evidence-based; do not add
-fields on suspicion.
+XSIAM validator rules, and kept in step with the cortex-platform-xdm-author
+skill's banned-field registry. Every entry must be evidence-based; do not
+add fields on suspicion.
 """
 
 import re
 
 
-# Fields confirmed unusable as data model rule mapping targets.
+# Fields unusable as data model rule mapping targets.
 UNMAPPABLE_XDM_FIELDS = frozenset({
+    # XCloud asset-inventory attribute (asset types such as t2.micro, gp3),
+    # not part of any event data model. Failed on a tenant.
     "xdm.source.cloud.source_type",
+    # The same asset attribute on the target and intermediate entities,
+    # banned with it; not separately reproduced on a tenant.
+    "xdm.target.cloud.source_type",
+    "xdm.intermediate.cloud.source_type",
+    # Listed upstream as a Boolean beside xdm.target.user.groups, but not in
+    # the event model. Refused by the tenant's data model rule editor, and a
+    # pack install carrying it sat an hour in Installing then failed with a
+    # 101704 naming nothing (2026-10-27). The group's name belongs in
+    # xdm.target.user.groups.
+    "xdm.target.user.group",
 })
 
 _STRING_LITERAL_PATTERN = re.compile(r'"(?:[^"\\\n]|\\.)*"')

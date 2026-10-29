@@ -35,20 +35,19 @@ XSIAM_DEPTH_ONE_PREFIX_DIRS = {
     "XSIAMReports": {".json", ".png"},
 }
 
-# Content directories whose YAML items have a demisto-sdk strict model.
-# Maps the directory to its model module, model name, and whether the items
-# sit in package subdirectories. `demisto-sdk validate` does not enforce
-# these models in practice (a rule missing a required field, or carrying a
-# field the model forbids, passes), so they are applied here.
-# Fields the Cortex Platform stores, returns, and acts on for correlation
-# rules, but which demisto-sdk's strict model does not declare. Verified
-# against a live tenant (/public_api/v1/correlations/get returns them on
-# built-in rules) and against demisto-sdk 1.39.1 (re-checked at the 1.39.5
-# bump, August 2026), whose `validate` accepts a
-# rule carrying all of them. Warning about these would be noise, and acting
-# on the warning would discard real behaviour: is_enabled controls whether a
-# rule installs active, alert_domain selects the domain, timezone drives the
-# cron schedule.
+# Fields the Cortex Platform stores and acts on for a correlation rule, but
+# which demisto-sdk's StrictCorrelationRule does not declare: is_enabled
+# decides whether the rule installs active, alert_domain picks the domain,
+# timezone drives the crontab. They are kept, and not reported.
+#
+# demisto/content's CI does reject them. It applies the strict model as ST110,
+# an error a pack cannot ignore, and none of the correlation rules merged there
+# carries one; it rejects a list suppression_fields for the same reason.
+# An interim build failed validate on them. The estate's decision (2026-10-22)
+# is that tenant behaviour matters more than that store requirement, so they
+# are exempt again - knowingly, not as the false positive an earlier version
+# of this note took them for. simple_schedule is exempt here only because
+# invalid_simple_schedule reports it with the platform reason.
 PLATFORM_CORRELATION_FIELDS = {
     "action",
     "alert_domain",
@@ -59,9 +58,34 @@ PLATFORM_CORRELATION_FIELDS = {
     "simple_schedule",
 }
 
-# The strict model declares suppression_fields as a string, but the platform
-# stores an array and demisto-sdk accepts one. A list is not a finding.
+# The strict model types suppression_fields as a string; the platform stores
+# and exports an array. Exempt by the same decision.
 LIST_TOLERANT_FIELDS = {"suppression_fields"}
+
+# demisto-sdk's PlatformSupportedModules: the only values `supportedModules`
+# may hold. Licence codes (C1, X1, ENT_PLUS, ...) are not among them, and
+# BA131 fails an item declaring one. test_sdk_contract keeps this equal to the
+# pinned SDK's enum.
+SUPPORTED_MODULES = frozenset({
+    "agentix",
+    "asm",
+    "cloud",
+    "cloud_appsec",
+    "cloud_posture",
+    "cloud_runtime_security",
+    "data_security",
+    "edr",
+    "email_security",
+    "exposure_management",
+    "tim",
+    "xsiam",
+    "xti",
+})
+
+# Content directories whose YAML items have a demisto-sdk strict model.
+# Maps the directory to its model module, model name, and whether the items
+# sit in package subdirectories. Spellbook's `demisto-sdk validate` run does
+# not select ST110, which applies these models, so they are applied here.
 
 # demisto-sdk's name for the pack attribution file. The SDK reads it as a
 # flat List[str] of contributor names; any other shape is unreadable to it.
@@ -80,16 +104,6 @@ SCHEMA_FILENAME_SUFFIX = "_schema.json"
 # collide is exactly the pack someone is midway through editing.
 FROMVERSION_PATTERN = re.compile(
     r"""^﻿?["']?fromversion["']?:\s*["']?([0-9][0-9.]*)""", re.M
-)
-
-# An integration YAML must open with one of these. Order is the point, so this
-# is matched against raw text rather than a parsed mapping.
-INTEGRATION_ROOT_KEYS = {"name", "display"}
-# The key may be quoted, and a Windows-authored file may open with a UTF-8
-# BOM. Both defeated a bare ^name match, producing a false 'wrong first key'
-# whose remediation could not fix it - name already WAS the first key.
-ROOT_KEY_PATTERN = re.compile(
-    r"""^﻿?["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:"""
 )
 
 # Python and PowerShell content runs in the container its `dockerimage` names -
@@ -123,6 +137,82 @@ MODEL_HEADER_DATASET_PATTERN = re.compile(
     r"""^\s*\[\s*MODEL\s*:\s*dataset\s*=\s*["']?([A-Za-z_0-9]+)""",
     re.M | re.IGNORECASE,
 )
+
+# demisto-sdk's release-note grammar, mirrored for RN113, RN114 and RN115.
+# Those validators run only on a pack git reports as MODIFIED, so spellbook's
+# `validate -i` never runs them, yet demisto/content's CI fails a pull request
+# updating a merged pack on any of them. Copied from the pinned SDK, and
+# test_sdk_contract keeps each equal to it.
+#
+# RN_HEADER_BY_FILE_TYPE's values: the only valid first-level `####` headers.
+RN_CONTENT_TYPE_HEADERS = frozenset({
+    "Actions", "Agents", "Assets Modeling Rules", "Case Fields",
+    "Case Layout Rules", "Case Layouts", "Classifiers",
+    "Correlation Rules", "Dashboards", "Incident Fields", "Incident Types",
+    "Indicator Fields", "Indicator Types", "Integrations", "Jobs", "Knowledge",
+    "Layout Rules", "Layouts", "Lists", "Mappers", "Modeling Rules",
+    "Modeling Rules Schema", "Modules", "Object Fields", "Object Types",
+    "Objects", "Parsing Rules", "Playbooks", "PreProcess Rules", "Reports",
+    "Scripts", "Skills", "Triggers Recommendations", "Widgets", "Wizards",
+    "XDRC Templates", "XSIAM Dashboards", "XSIAM Reports",
+})
+# CONTENT_TYPE_SECTION_REGEX and CONTENT_ITEM_SECTION_REGEX.
+RN_TYPE_SECTION = re.compile(
+    r"^#### ([\w ]+)$\n([\w\W]*?)(?=^#### )|^#### ([\w ]+)$\n([\w\W]*)", re.M
+)
+RN_ITEM_SECTION = re.compile(
+    r"^##### (.+)$\n([\w\W]*?)(?=^##### )|^##### (.+)$\n([\w\W]*)|"
+    r"^- (?:New: )?$",
+    re.M,
+)
+# PB_RELEASE_NOTES_FORMAT: sub-headers RN114 allows under Playbooks.
+RN_PLAYBOOK_SUBHEADERS = frozenset({
+    "This playbook addresses the following alerts:", "Playbook Stages:",
+    "Requirements:", "Triage:", "Early Containment:", "Investigation:",
+    "Containment:",
+})
+RN_NEW_ITEM_PREFIX = "New: "
+# Valid first-level headers RN113 accepts but RN114 rejects as a content type:
+# the SDK cannot map the header back to itself (Modeling Rules Schema has no
+# content type; Case Layouts maps to CaseLayout, whose header is Layouts).
+# test_sdk_contract recomputes this from the SDK.
+RN114_REJECTED_HEADERS = frozenset({"Case Layouts", "Modeling Rules Schema"})
+
+# Where RN114 finds the display name of each kind of item a release note can
+# name: the folder, how its descriptors are laid out, the field path, and the
+# fallback the SDK's parser uses when the name is empty (an item's id). A
+# header for a kind not mapped here is not checked, rather than checked
+# against a guess.
+RN_DISPLAY_NAME_SOURCES = {
+    "Integrations": ("Integrations", "package", ("display",), None),
+    "Scripts": ("Scripts", "package", ("name",), ("commonfields", "id")),
+    "Playbooks": ("Playbooks", "flat-yml", ("name",), ("id",)),
+    "Correlation Rules": ("CorrelationRules", "flat-yml", ("name",), ("global_rule_id",)),
+    "Modeling Rules": ("ModelingRules", "nested-yml", ("name",), ("id",)),
+    "Parsing Rules": ("ParsingRules", "nested-yml", ("name",), ("id",)),
+    "XSIAM Dashboards": ("XSIAMDashboards", "json", ("dashboards_data", 0, "name"), ("dashboards_data", 0, "global_id")),
+    "XSIAM Reports": ("XSIAMReports", "json", ("templates_data", 0, "report_name"), ("templates_data", 0, "global_id")),
+    "Triggers Recommendations": ("Triggers", "json", ("trigger_name",), ("trigger_id",)),
+    "Incident Fields": ("IncidentFields", "json", ("name",), ("id",)),
+    "Incident Types": ("IncidentTypes", "json", ("name",), ("id",)),
+    "Layouts": ("Layouts", "json", ("name",), ("id",)),
+    "Jobs": ("Jobs", "json", ("name",), ("id",)),
+}
+
+# How demisto-sdk decides a pack is deprecated, which skips RN113/RN114/RN115:
+# not a metadata key, but a name ending "(Deprecated)" AND a description
+# opening "Deprecated. Use X instead." or "Deprecated. No available
+# replacement." (PACK_NAME_DEPRECATED_REGEX, DEPRECATED_DESC_REGEX and
+# DEPRECATED_NO_REPLACE_DESC_REGEX; test_sdk_contract keeps them equal).
+PACK_NAME_DEPRECATED = re.compile(r".* \(Deprecated\)")
+PACK_DESC_DEPRECATED = (
+    re.compile(r"Deprecated\.\s*(.*?No available replacement\.*?)"),
+    re.compile(r"Deprecated\.\s*(.*?Use .*? instead\.*?)"),
+)
+
+# Pack folders that hold no content items. RN114 is skipped for a pack with no
+# items of any kind, so these are left out when deciding whether it has any.
+RN_NON_CONTENT_DIRS = {"ReleaseNotes", "doc_files", "doc_imgs", "test_data"}
 
 STRICT_MODEL_SOURCES = {
     "CorrelationRules": (
@@ -514,7 +604,9 @@ class XSIAMValidator:
             name="invalid_simple_schedule",
             content_type="CorrelationRules",
             file_pattern="*.yml",
-            pattern=r'^\s*simple_schedule\s*:',
+            # A quoted key, or one after a BOM, is the same key; the strict
+            # check leaves simple_schedule to this rule, so it must see both.
+            pattern=r"""^﻿?\s*["']?simple_schedule["']?\s*:""",
             message="the correlation rule carries a 'simple_schedule' field",
             severity="error",
             consequence=(
@@ -603,13 +695,15 @@ class XSIAMValidator:
 
         issues.extend(self._check_pack_categories(pack_path))
 
-        issues.extend(self._check_integration_root_key(pack_path))
+        issues.extend(self._check_supported_modules(pack_path))
 
         issues.extend(self._check_correlation_drilldown(pack_path))
 
         issues.extend(check_modeling_schemas(pack_path))
 
         issues.extend(check_modeling_rule_activation(pack_path))
+
+        issues.extend(check_release_notes(pack_path))
 
         return issues
 
@@ -686,14 +780,18 @@ class XSIAMValidator:
             ))
         return issues
 
-    def _check_integration_root_key(self, pack_path: Path) -> list[ValidationIssue]:
-        """Check each integration YAML opens with `name` or `display`.
+    def _check_supported_modules(self, pack_path: Path) -> list[ValidationIssue]:
+        """Check integrations declare module names in supportedModules.
 
-        The marketplace review bot marks this CRITICAL and demisto-sdk has no
-        equivalent, so it reaches a public pull request untouched. It is a
-        property of key ORDER, which `yaml.safe_load` discards, so the first
-        top-level key is read from the raw text - which also means a file that
-        does not parse is still checked rather than skipped.
+        A licence code such as C1, X1 or ENT_PLUS is not a module.
+        demisto-sdk's strict integration model types every supportedModules
+        - the integration's, each configuration parameter's and each
+        command's - as a list of module names, so demisto/content's CI fails
+        a code in any of them (ST110), and BA131 fails one in the integration's
+        own. It is checked here rather than BA131 selected, because BA131 also
+        rejects the module set the SDK assumes for a rule item that declares
+        none - a value the author never wrote; pack_builder records the
+        measurement.
 
         Args:
             pack_path: Path to the pack directory.
@@ -705,45 +803,75 @@ class XSIAMValidator:
         for yml_path in content_descriptors(pack_path / "Integrations"):
             try:
                 text = yml_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                data = yaml.safe_load(text)
+            except (OSError, UnicodeDecodeError, yaml.YAMLError):
+                # Unparseable YAML is demisto-sdk's to report.
+                continue
+            if not isinstance(data, dict):
                 continue
 
-            first_key = None
-            first_line = 0
-            for number, line in enumerate(text.splitlines(), start=1):
-                stripped = line.strip()
-                # Skip blanks, comments and the document marker; a key that is
-                # indented belongs to a mapping, not the root.
-                if not stripped or stripped.startswith("#") or stripped == "---":
-                    continue
-                if line[:1].isspace() or line.startswith("-"):
-                    continue
-                match = ROOT_KEY_PATTERN.match(line)
-                if match:
-                    first_key, first_line = match.group(1), number
-                    break
+            # (where, value, line, the codes that fail it)
+            declarations = [(
+                "supportedModules",
+                data.get("supportedModules"),
+                _root_key_line(text, "supportedModules"),
+                "BA131 and ST110",
+            )]
+            configuration = data.get("configuration")
+            for param in configuration if isinstance(configuration, list) else []:
+                if isinstance(param, dict) and "supportedModules" in param:
+                    declarations.append((
+                        f"supportedModules of configuration parameter "
+                        f"'{param.get('name', '?')}'",
+                        param["supportedModules"],
+                        None,
+                        "ST110",
+                    ))
+            script = data.get("script")
+            commands = script.get("commands") if isinstance(script, dict) else None
+            for command in commands if isinstance(commands, list) else []:
+                if isinstance(command, dict) and "supportedModules" in command:
+                    declarations.append((
+                        f"supportedModules of command '{command.get('name', '?')}'",
+                        command["supportedModules"],
+                        None,
+                        "ST110",
+                    ))
 
-            if first_key is None or first_key in INTEGRATION_ROOT_KEYS:
-                continue
-
-            issues.append(ValidationIssue(
-                rule_name="integration_root_key_order",
-                severity="error",
-                file_path=str(yml_path.relative_to(pack_path.parent)),
-                line_number=first_line,
-                message=(
-                    f"the first root-level key is '{first_key}', but an "
-                    f"integration YAML must open with 'name' or 'display'"
-                ),
-                consequence=(
-                    "the marketplace review flags this as critical and the "
-                    "submission is rejected before anything else is assessed"
-                ),
-                remediation=(
-                    f"move the 'name:' (or 'display:') line above "
-                    f"'{first_key}:' at the top of {yml_path.name}"
-                ),
-            ))
+            for where, value, line, codes in declarations:
+                if value is None:
+                    continue
+                if isinstance(value, list):
+                    invalid = [
+                        str(v) for v in value
+                        if not (isinstance(v, str) and v in SUPPORTED_MODULES)
+                    ]
+                    if not invalid:
+                        continue
+                    message = (
+                        f"{where} holds {', '.join(invalid)}, which "
+                        f"{'is not a module name' if len(invalid) == 1 else 'are not module names'}"
+                    )
+                else:
+                    message = f"{where} is '{value}', not a list of module names"
+                issues.append(ValidationIssue(
+                    rule_name="supported_modules_invalid",
+                    severity="error",
+                    file_path=str(yml_path.relative_to(pack_path.parent)),
+                    line_number=line,
+                    message=message,
+                    consequence=(
+                        f"demisto/content's CI accepts only demisto-sdk's "
+                        f"module names there and fails the pull request "
+                        f"({codes}); licence codes such as C1 or X1 are not "
+                        f"modules, and no merged integration uses them"
+                    ),
+                    remediation=(
+                        "replace them with module names - an XSIAM collector "
+                        "takes [xsiam]; the valid modules are "
+                        f"{', '.join(sorted(SUPPORTED_MODULES))}"
+                    ),
+                ))
         return issues
 
     def _check_pack_metadata_readable(self, pack_path: Path) -> list[ValidationIssue]:
@@ -1226,13 +1354,12 @@ class XSIAMValidator:
         return models
 
     def _is_known_model_gap(self, field: str, error: dict, data: dict) -> bool:
-        """Return True if an error reflects a gap in the SDK model, not the content.
+        """Return True for a strict-model failure the estate keeps on purpose.
 
-        The strict models lag the platform in two known ways: they omit
-        fields the platform actively uses, and they type suppression_fields
-        as a string where the platform stores an array. Reporting either
-        would bury real findings under noise, and acting on it would break
-        working content.
+        The platform fields the model does not declare, and suppression_fields
+        as a list. demisto/content's CI rejects both (see
+        PLATFORM_CORRELATION_FIELDS); the estate keeps them for the tenant's
+        behaviour, so reporting them would only bury real findings.
         """
         if error.get("type") == "value_error.extra":
             return field in PLATFORM_CORRELATION_FIELDS
@@ -1244,9 +1371,9 @@ class XSIAMValidator:
         """Check YAML content items against the demisto-sdk strict models.
 
         Catches required fields that are missing and fields the model
-        forbids. Reported as warnings because the models are stricter than
-        what a tenant accepts at install time, but match what the official
-        content store enforces.
+        forbids. demisto/content's CI applies these models as ST110; reported
+        here as warnings. The platform fields a tenant export carries are
+        exempt by the estate's decision (see PLATFORM_CORRELATION_FIELDS).
 
         Args:
             pack_path: Path to the pack directory.
@@ -1309,27 +1436,22 @@ class XSIAMValidator:
                                 f"{error.get('msg', 'schema mismatch')}"
                             ),
                             consequence=(
-                                f"the platform validates against "
-                                f"{model.__name__} on install, so the item can "
-                                f"be rejected or land with the field ignored"
+                                f"demisto/content's CI checks the item against "
+                                f"{model.__name__} (ST110), so a pull request "
+                                f"carrying it fails there"
                             ),
-                            remediation=(
-                                "correct the field to match the model; if the "
-                                "platform genuinely accepts this shape, add it "
-                                "to PLATFORM_CORRELATION_FIELDS rather than "
-                                "changing the content"
-                            ),
+                            remediation="correct the field to match the model",
                         ))
 
         return issues
 
     def _check_unmappable_xdm_fields(self, pack_path: Path) -> list[ValidationIssue]:
-        """Check modelling rule XIF files for platform-derived XDM fields.
+        """Check modelling rule XIF files for XDM fields a rule may not assign.
 
-        Certain XDM fields are valid in the schema but cannot be mapping
-        targets in a data model rule; assigning to one leaves the pack in
-        an orphaned state on the tenant (the rule installs but never
-        compiles). Assignments are errors. Any other occurrence inside a
+        Certain XDM fields are valid in the schema but are not part of the
+        event model a data model rule maps to (see xdm_fields); assigning to
+        one is refused by the tenant, and a pack carrying it fails to install
+        or installs without compiling. Assignments are errors. Any other occurrence inside a
         modelling rule is unusual and reported as a warning. Other content
         types (correlation rule XQL, investigation queries) legitimately
         reference these fields and are not checked.
@@ -1361,15 +1483,24 @@ class XSIAMValidator:
                         severity="error",
                         file_path=relative_path,
                         message=(
-                            f"'{finding['field']}' is a platform-derived XDM "
-                            f"field and cannot be a mapping target in a data "
-                            f"model rule"
+                            f"'{finding['field']}' cannot be a mapping target "
+                            f"in a data model rule"
                         ),
                         consequence=(
-                            "validation fails and the pack installs in an "
-                            "orphaned state"
+                            "it is not part of the data model the rule maps "
+                            "to, so the tenant refuses the rule, and a pack "
+                            "carrying it fails to install (a 101704 naming "
+                            "nothing) or installs without compiling"
                         ),
-                        remediation="remove the assignment",
+                        remediation=(
+                            "remove the assignment"
+                            + (
+                                "; put a group's name in "
+                                "xdm.target.user.groups instead"
+                                if finding["field"] == "xdm.target.user.group"
+                                else ""
+                            )
+                        ),
                         line_number=finding["line"],
                     ))
                 else:
@@ -1378,11 +1509,12 @@ class XSIAMValidator:
                         severity="warning",
                         file_path=relative_path,
                         message=(
-                            f"'{finding['field']}' is a platform-derived XDM "
-                            f"field that a data model rule cannot populate"
+                            f"'{finding['field']}' is an XDM field a data "
+                            f"model rule cannot populate"
                         ),
                         consequence=(
-                            "the rule cannot set it; the platform derives it"
+                            "it is not part of the data model the rule maps "
+                            "to, so its presence here is unusual"
                         ),
                         remediation=(
                             "confirm the occurrence is intentional, or remove it"
@@ -1631,6 +1763,19 @@ _Yaml12BoolLoader.add_implicit_resolver(
     re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
     list("tTfF"),
 )
+
+
+def _root_key_line(text: str, key: str) -> int | None:
+    """Return the line a top-level YAML key is on, or None when it is absent.
+
+    The key may be quoted, and a Windows-authored file may open with a BOM.
+    An indented occurrence belongs to a nested mapping and is not the root.
+    """
+    pattern = re.compile(rf"""^﻿?["']?{re.escape(key)}["']?\s*:""")
+    for number, line in enumerate(text.splitlines(), start=1):
+        if pattern.match(line):
+            return number
+    return None
 
 
 def content_descriptors(content_dir: Path) -> list[Path]:
@@ -1899,4 +2044,312 @@ def check_docker_images(pack_path: Path) -> list[ValidationIssue]:
                 consequence=consequence,
                 remediation=remediation,
             ))
+    return issues
+
+
+def _value_at(data, path: tuple) -> object:
+    """Follow a path of keys and list indexes, or return None where it breaks."""
+    for step in path:
+        if isinstance(step, int):
+            if not isinstance(data, list) or len(data) <= step:
+                return None
+            data = data[step]
+        else:
+            if not isinstance(data, dict):
+                return None
+            data = data.get(step)
+    return data
+
+
+def _rn_display_names(pack_path: Path, header: str) -> set[str]:
+    """Return the display names RN114 compares a header's item headers to.
+
+    YAML is read with YAML 1.2 booleans, as the SDK reads it, so an item
+    named Yes or On keeps its name rather than becoming a bool.
+    """
+    folder, layout, name_path, fallback = RN_DISPLAY_NAME_SOURCES[header]
+    content_dir = pack_path / folder
+    if not content_dir.is_dir():
+        return set()
+    if layout == "package":
+        files = content_descriptors(content_dir)
+    elif layout == "flat-yml":
+        files = sorted(content_dir.glob("*.yml"))
+    elif layout == "nested-yml":
+        files = sorted(content_dir.rglob("*.yml"))
+    else:
+        files = sorted(content_dir.glob("*.json"))
+
+    names = set()
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+            if layout == "json":
+                data = json.loads(text)
+            else:
+                data = yaml.load(text, Loader=_Yaml12BoolLoader)
+        except (OSError, UnicodeDecodeError, ValueError, yaml.YAMLError):
+            continue
+        value = _value_at(data, name_path)
+        if not value and fallback:
+            value = _value_at(data, fallback)
+        if isinstance(value, str) and value:
+            names.add(value)
+    return names
+
+
+def _latest_release_note(pack_path: Path) -> Path | None:
+    """Return the note demisto-sdk's release-note validators read.
+
+    That is the highest-versioned ReleaseNotes/*.md (get_pack_latest_rn_version),
+    not the one currentVersion names: the two differ when a version is
+    rolled back or re-scaffolded, and the SDK reads the higher. A stem that
+    is not a version is skipped.
+    """
+    notes_dir = pack_path / "ReleaseNotes"
+    if not notes_dir.is_dir():
+        return None
+    candidates = []
+    for path in notes_dir.glob("*.md"):
+        version = _version_tuple(path.stem.replace("_", "."))
+        if version is not None and path.is_file():
+            candidates.append((version, path.name, path))
+    return max(candidates)[2] if candidates else None
+
+
+def _pack_is_deprecated(metadata: dict) -> bool:
+    """Return whether demisto-sdk treats the pack as deprecated."""
+    name = metadata.get("name")
+    description = metadata.get("description")
+    if not isinstance(name, str) or not isinstance(description, str):
+        return False
+    return bool(PACK_NAME_DEPRECATED.match(name)) and any(
+        pattern.match(description) for pattern in PACK_DESC_DEPRECATED
+    )
+
+
+def _pack_has_items(pack_path: Path) -> bool:
+    """Return whether the pack holds a content item of any kind."""
+    for child in pack_path.iterdir():
+        if (not child.is_dir() or child.name.startswith(".")
+                or child.name in RN_NON_CONTENT_DIRS):
+            continue
+        if any(p.suffix in (".yml", ".json") and p.is_file() for p in child.rglob("*")):
+            return True
+    return False
+
+
+def check_release_notes(pack_path: Path) -> list[ValidationIssue]:
+    """Check the latest release note's headers the way demisto-sdk does.
+
+    Mirrors RN113 (a first-level `####` header must be a content type), RN114
+    (it must also map back to a content type, and each `#####` item header
+    must equal the display name of an item of that type in this pack) and
+    RN115 (a content-type header must have item headers under it). The note
+    read is the one the SDK reads: the highest-versioned in ReleaseNotes/.
+
+    Warnings, not errors. The SDK runs these only on a pack git reports as
+    MODIFIED - a pack already merged upstream and being updated - so they do
+    not fail a first submission, and spellbook's own `validate -i` never runs
+    them at all. Each code honours a `.pack-ignore` suppression on its own,
+    as the SDK does: ignoring RN113 does not silence RN114 or RN115 about the
+    same header. A deprecated pack is skipped, as the SDK skips it.
+
+    Args:
+        pack_path: Path to the pack directory.
+
+    Returns:
+        List of validation issues found.
+    """
+    try:
+        metadata = json.loads((pack_path / "pack_metadata.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        # Unreadable metadata is pack_metadata_unreadable's to report.
+        return []
+    if not isinstance(metadata, dict) or _pack_is_deprecated(metadata):
+        return []
+    note = _latest_release_note(pack_path)
+    if note is None:
+        return []
+    # Decoded without newline translation: the SDK keeps a CRLF note's \r,
+    # so its `$\n` header pattern finds no section in one, and neither may
+    # this. A note that is not UTF-8 the SDK still decodes; latin-1 never
+    # fails, and the headers that matter are ASCII.
+    try:
+        raw = note.read_bytes()
+    except OSError:
+        return []
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    pack_codes, file_codes = _suppressed_codes(pack_path)
+    suppressed = pack_codes | set(file_codes.get(note.name, []))
+    relative = str(note.relative_to(pack_path.parent))
+    pack_wide = "`## <pack display name>`"
+    check_items = not _sdk_bool(metadata.get("hidden")) and _pack_has_items(pack_path)
+
+    def line_of(offset: int) -> int:
+        return text.count("\n", 0, offset) + 1
+
+    issues = []
+    # Each section's header, line, whether any item-pattern matched, and its
+    # named items with their lines.
+    sections = []
+    for match in RN_TYPE_SECTION.finditer(text):
+        body_group = 2 if match.group(1) else 4
+        header = match.group(1) or match.group(3)
+        body = match.group(body_group) or ""
+        if body == "":
+            # demisto-sdk drops an empty section body and then indexes past
+            # it: RN114 and RN115 raise, and the run aborts. No suppression
+            # covers a crash.
+            issues.append(ValidationIssue(
+                rule_name="release_note_header_without_items",
+                severity="warning",
+                file_path=relative,
+                line_number=line_of(match.start()),
+                message=f"'#### {header}' is followed directly by another '####' header",
+                consequence=(
+                    "an empty section crashes demisto-sdk's release-note "
+                    "validators, so validation aborts in demisto/content's CI "
+                    "on any pull request that updates the pack once it is merged"
+                ),
+                remediation=(
+                    "give the section its `##### <item display name>` entries, "
+                    "or remove the header"
+                ),
+            ))
+            continue
+        body_start = match.start(body_group)
+        found = list(RN_ITEM_SECTION.finditer(body))
+        items = []
+        for item_match in found:
+            values = [value for value in item_match.groups() if value]
+            if values:
+                items.append((values[0], line_of(body_start + item_match.start())))
+        sections.append((header, line_of(match.start()), bool(found), items))
+
+    # RN115's view: sections merge by content type, and a section with no
+    # item-pattern match at all resets that type to empty - so a later empty
+    # duplicate fails it and an earlier one does not.
+    rn115: dict[str, list] = {}
+    rn115_line: dict[str, int] = {}
+    # RN114's view: every named item, by content type, without resets.
+    rn114: dict[str, list] = {}
+    for header, line, matched, items in sections:
+        if not matched:
+            rn115[header] = []
+            rn115_line[header] = line
+        elif items:
+            rn115.setdefault(header, []).extend(items)
+            rn115_line.setdefault(header, line)
+        for name, item_line in items:
+            name = name.removeprefix(RN_NEW_ITEM_PREFIX) if RN_NEW_ITEM_PREFIX in name else name.rstrip()
+            if header == "Playbooks" and name in RN_PLAYBOOK_SUBHEADERS:
+                continue
+            rn114.setdefault(header, []).append((name, item_line))
+
+    rn114_runs = check_items and "RN114" not in suppressed
+    rejected = set()
+    for header, line, _matched, _items in sections:
+        if header in rejected:
+            continue
+        codes = []
+        if header not in RN_CONTENT_TYPE_HEADERS and "RN113" not in suppressed:
+            codes.append("RN113")
+        if (rn114_runs and rn114.get(header)
+                and (header not in RN_CONTENT_TYPE_HEADERS or header in RN114_REJECTED_HEADERS)):
+            codes.append("RN114")
+        if not codes:
+            continue
+        rejected.add(header)
+        if header == "Modeling Rules Schema":
+            remediation = "list a schema change under `#### Modeling Rules`, naming the rule"
+        elif header == "Case Layouts":
+            remediation = "list the layout under `#### Layouts`"
+        else:
+            remediation = (
+                f"put a pack-wide note under {pack_wide}, or name the content "
+                f"type, e.g. `#### Integrations` or `#### Correlation Rules`, "
+                f"with `##### <item display name>` under it"
+            )
+        issues.append(ValidationIssue(
+            rule_name="release_note_header_not_content_type",
+            severity="warning",
+            file_path=relative,
+            line_number=line,
+            message=(
+                f"first-level header '#### {header}' is not a content type"
+                + (" RN114 accepts" if header in RN114_REJECTED_HEADERS else "")
+            ),
+            consequence=(
+                f"demisto/content's CI rejects it ({' and '.join(codes)}) on "
+                f"any pull request that updates the pack once it is merged"
+            ),
+            remediation=remediation,
+        ))
+
+    if "RN115" not in suppressed:
+        for header, items in rn115.items():
+            # One finding per defect: a header already rejected is fixed by
+            # the same edit.
+            if items or header in rejected:
+                continue
+            issues.append(ValidationIssue(
+                rule_name="release_note_header_without_items",
+                severity="warning",
+                file_path=relative,
+                line_number=rn115_line[header],
+                message=f"'#### {header}' has no '##### <item>' header under it",
+                consequence=(
+                    "demisto/content's CI rejects the note (RN115) on any pull "
+                    "request that updates the pack once it is merged"
+                ),
+                remediation=(
+                    "name each changed item under it as `##### <item display "
+                    f"name>`, or move a pack-wide note under {pack_wide}"
+                ),
+            ))
+
+    if rn114_runs:
+        for header, entries in rn114.items():
+            if (header not in RN_CONTENT_TYPE_HEADERS or header in RN114_REJECTED_HEADERS
+                    or header not in RN_DISPLAY_NAME_SOURCES):
+                continue
+            names = _rn_display_names(pack_path, header)
+            seen = set()
+            for name, item_line in entries:
+                if name in names or name in seen:
+                    continue
+                seen.add(name)
+                if names:
+                    listed = sorted(names)
+                    choices = ", ".join(listed[:8]) + (", ..." if len(listed) > 8 else "")
+                    remediation = (
+                        f"use the item's display name exactly - here: {choices}; "
+                        f"mark a new item as `##### New: <name>`"
+                    )
+                else:
+                    remediation = (
+                        f"this pack has no {header}; remove the section, or "
+                        f"move the note under {pack_wide}"
+                    )
+                issues.append(ValidationIssue(
+                    rule_name="release_note_item_not_in_pack",
+                    severity="warning",
+                    file_path=relative,
+                    line_number=item_line,
+                    message=(
+                        f"'##### {name}' under '#### {header}' matches no item "
+                        f"of that type in this pack"
+                    ),
+                    consequence=(
+                        "demisto/content's CI rejects the note (RN114) on any "
+                        "pull request that updates the pack once it is merged; "
+                        "an item header must equal the item's display name"
+                    ),
+                    remediation=remediation,
+                ))
     return issues

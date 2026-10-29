@@ -22,8 +22,8 @@ docker pull ghcr.io/gocortexio/spellbook:latest
 
 `:latest` does not say which build you got. `spellbook --version` reports the
 commit an image was built from, so it can confirm what you are actually
-running: an image published by CI prints `1.25.4 (<commit>)`, while one built
-locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+running: an image published by CI prints `1.25.9 (<commit>)`, while one built
+locally with `docker build` prints `1.25.9 (local build, unstamped)`. Images
 published before 1.24.0 predate the build stamp and report a bare version with
 no identifier, so match the image ID to tell those apart. The stamp cannot
 distinguish two local builds from each other: every local build is unstamped.

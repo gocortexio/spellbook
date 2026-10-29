@@ -26,9 +26,13 @@ class CorrelationImporter:
     removed. Everything else is preserved verbatim, including fields that
     demisto-sdk's strict model does not declare (action, alert_domain,
     alert_type, is_enabled, timezone). The Cortex Platform stores and uses
-    those fields, and `demisto-sdk validate` does not reject them, so
-    stripping them would silently discard real behaviour: a rule could
-    install disabled, or land in the wrong alert domain.
+    those fields, so stripping them would silently discard real behaviour: a
+    rule could install disabled, or land in the wrong alert domain.
+
+    demisto/content's CI rejects them (ST110), and a list suppression_fields
+    with them. The estate keeps them anyway, because tenant behaviour matters
+    more to it than that store requirement (decided 2026-10-22); see
+    PLATFORM_CORRELATION_FIELDS in xsiam_validator.
     """
 
     FIELDS_TO_REMOVE = {
@@ -279,9 +283,9 @@ class CorrelationImporter:
             cleaned.pop("user_defined_category", None)
 
         # suppression_fields is left in whatever form the export used. The
-        # platform stores it as an array and demisto-sdk accepts that, even
-        # though the SDK's strict model declares it as a string; rewriting it
-        # would change content to satisfy a model the SDK does not enforce.
+        # platform stores it as an array; the SDK's strict model declares a
+        # string, and the store's CI enforces that, but the estate keeps the
+        # platform's form (see the class docstring).
 
         for field_name, generator in self.FIELDS_TO_ADD.items():
             if field_name not in cleaned:

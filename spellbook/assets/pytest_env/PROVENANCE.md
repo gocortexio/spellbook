@@ -6,8 +6,8 @@ content pipeline does. demisto-sdk does not ship them: the pipeline stages
 them from a content checkout, which a Spellbook instance does not have.
 
 Source: https://github.com/demisto/content
-Commit: c07760e45e714ed17643790350216b43d4238b9c
-Copied: 2026-07-24
+Commit: 1b456b190753e776c73c40be048b30989ed92b50
+Copied: 2026-10-29
 
 | File | Source path in demisto/content |
 |------|--------------------------------|

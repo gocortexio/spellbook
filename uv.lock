@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -522,7 +522,7 @@ wheels = [
 
 [[package]]
 name = "demisto-sdk"
-version = "1.39.5"
+version = "1.39.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "autopep8" },
@@ -593,9 +593,9 @@ dependencies = [
     { name = "werkzeug" },
     { name = "yamlordereddictloader" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/24/959bdb623505fc630e22c9dc140538cd79b2830af8b5edddf083ec191a4a/demisto_sdk-1.39.5.tar.gz", hash = "sha256:8fa6e09eb31d7134cd2f3c8868e60bb09cc8e18d6ac675e808b367724c3f4e8b", size = 1892670, upload-time = "2026-07-21T23:12:50.105Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/9d/c25ff021535e6b3d8b443e1386bddec0d32f93ff6de4fa1174c165058026/demisto_sdk-1.39.13.tar.gz", hash = "sha256:800a9e25016ba75fab31a737a03e38980dc8529344447b5c92cc6e1e9c38ff91", size = 2078170, upload-time = "2026-10-20T09:25:39.982Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/82/73dda01937d30b1201ceb1aafa81c3cb93a704c0833a969284daaad3601c/demisto_sdk-1.39.5-py3-none-any.whl", hash = "sha256:fd927568b453d6fc96dc3ae6bb9ffc98c6c40b51c3264acba0954f3f801c66fc", size = 2510890, upload-time = "2026-07-21T23:12:48.231Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/2b/ad259cc1679fce23aa0e5833a69870e0142ec590298078de641ae31ca26e/demisto_sdk-1.39.13-py3-none-any.whl", hash = "sha256:054a7946a70fc2482efe976591e980d4357fea7ba046073ffe4f95ebda09fc37", size = 2785848, upload-time = "2026-10-20T09:25:38.213Z" },
 ]
 
 [[package]]
@@ -731,7 +731,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "demisto-sdk", specifier = "==1.39.5" },
+    { name = "demisto-sdk", specifier = "==1.39.13" },
     { name = "gitpython", specifier = ">=3.1.50" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-mock", specifier = ">=3.14" },

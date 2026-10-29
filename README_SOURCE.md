@@ -30,7 +30,7 @@ cd gocortex-spellbook
 Using pip:
 
 ```bash
-pip install "demisto-sdk==1.39.5" "gitpython>=3.1.50" "pyyaml>=6.0.3" "ruff==0.8.0"
+pip install "demisto-sdk==1.39.13" "gitpython>=3.1.50" "pyyaml>=6.0.3" "ruff==0.8.0"
 ```
 
 Or using uv:

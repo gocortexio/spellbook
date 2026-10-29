@@ -73,8 +73,8 @@ docker run --rm \
 
 `:latest` does not say which build you got. `spellbook --version` reports the
 commit an image was built from, so it can confirm what you are actually
-running: an image published by CI prints `1.25.4 (<commit>)`, while one built
-locally with `docker build` prints `1.25.4 (local build, unstamped)`. Images
+running: an image published by CI prints `1.25.9 (<commit>)`, while one built
+locally with `docker build` prints `1.25.9 (local build, unstamped)`. Images
 published before 1.24.0 predate the build stamp and report a bare version with
 no identifier, so match the image ID to tell those apart. The stamp cannot
 distinguish two local builds from each other: every local build is unstamped.
@@ -192,7 +192,9 @@ errors on an empty one rather than guessing.
 For findings that are not identity values - a missing `isFetchEvents`, a
 description without a full stop - `demisto-sdk validate --fix` handles a good
 share. Note it rewrites the whole YAML rather than patching it, so check the
-diff on a file carrying comments.
+diff on a file carrying comments. Clear any `supported_modules_invalid` finding
+first: on an integration still declaring licence codes such as `C1`, the fix
+gives every fetch parameter an empty `supportedModules`.
 
 `check-init` reports whether the upload credentials are visible, so it needs the
 same `-e DEMISTO_BASE_URL -e DEMISTO_API_KEY -e XSIAM_AUTH_ID` passthrough that
